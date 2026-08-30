@@ -9,6 +9,7 @@ import { CandidateCard } from "@/components/campops/candidate-card";
 import { AttentionCard } from "@/components/campops/attention-card";
 import { ReservationReview } from "@/components/campops/reservation-review";
 import { AuthorizeBookingDialog } from "@/components/campops/authorize-booking-dialog";
+import { EventRow } from "@/components/campops/event-row";
 import { Button } from "@/components/ui/button";
 import { text } from "@/lib/typography";
 import { evaluateCampsites } from "@/lib/evaluate";
@@ -20,11 +21,28 @@ import {
   transitionReservation,
 } from "@/lib/reservation";
 import {
+  deriveAlternativeRequestedEvent,
+  deriveAvailabilityChangedEvent,
+  deriveCandidateExcludedEvent,
+  deriveClarificationRequestedEvent,
+  deriveClarificationResolvedEvent,
+  deriveEvaluationPerformedEvent,
+  deriveIntentEvent,
+  deriveRecommendationAcceptedEvent,
+  deriveRecommendationRejectedEvent,
+  deriveRecommendationSelectedEvent,
+  deriveReplacementSelectedEvent,
+  deriveRequirementWidenedEvent,
+  deriveTaskClosedEvent,
+  deriveUnsupportedEvent,
+} from "@/lib/events";
+import {
   EMPTY_TRIP_INTENT,
   type EvaluationResult,
   type IntentInterpretation,
   type Reservation,
   type RequirementTier,
+  type TaskEvent,
   type TripIntent,
 } from "@/lib/schemas";
 
@@ -41,7 +59,7 @@ type ChatEntry =
       quickReplies?: string[];
     };
 
-type View = "search" | "reservation" | "closing";
+type View = "search" | "reservation" | "closing" | "activity";
 
 // Simulated commit delay for the "authorizing" state (Handoff Spec §5's
 // Pressed/Loading requirement) — purely cosmetic; the resulting state
@@ -78,11 +96,19 @@ function newId() {
   return crypto.randomUUID();
 }
 
+function formatTimestamp(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 const CLOSING_MESSAGE =
   "No worries — nothing was booked or searched further. Feel free to start a new trip anytime.";
 
 export default function Home() {
   const [messages, setMessages] = useState<ChatEntry[]>([]);
+  const [events, setEvents] = useState<TaskEvent[]>([]);
   const [draft, setDraft] = useState("");
   const [intent, setIntent] = useState<TripIntent>(EMPTY_TRIP_INTENT);
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
@@ -92,9 +118,18 @@ export default function Home() {
   const [unavailableIds, setUnavailableIds] = useState<Set<string>>(new Set());
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Task-local flags driving event derivation, not display — reset with the
+  // rest of task state on "Start a new search".
+  const [pendingClarification, setPendingClarification] = useState(false);
+  const [tripEstablished, setTripEstablished] = useState(false);
 
   const [view, setView] = useState<View>("search");
-  const [reservation, setReservation] = useState<Reservation | null>(null);
+  const [reservation, setReservationState] = useState<Reservation | null>(null);
+  // Mirrors `reservation` for the timeout callback below, which needs the
+  // freshest value without relying on a functional setState updater (which
+  // React's Strict Mode may invoke twice in development — fine for a pure
+  // reducer, not fine for one that also pushes an event as a side effect).
+  const reservationRef = useRef<Reservation | null>(null);
   // Guards the simulated authorize delay: cleared on cancel/unmount so a
   // stray AUTHORIZE can never fire after the user has already backed out.
   const authorizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -107,6 +142,11 @@ export default function Home() {
     !!activeCandidate && evaluation?.kind !== "no_match";
   const canRequestAlternative =
     !!evaluation && candidateIndex + 1 < evaluation.candidates.length;
+
+  function updateReservation(next: Reservation | null) {
+    reservationRef.current = next;
+    setReservationState(next);
+  }
 
   function pushChat(sender: "user" | "agent", msg: string) {
     setMessages((prev) => [
@@ -134,6 +174,11 @@ export default function Home() {
     ]);
   }
 
+  function pushEvent(event: TaskEvent | null) {
+    if (!event) return;
+    setEvents((prev) => [...prev, event]);
+  }
+
   /** Renders either a normal agent chat summary or a No Match Attention Card, per the evaluation's kind. */
   function announceEvaluation(result: EvaluationResult) {
     if (result.kind === "no_match") {
@@ -151,6 +196,9 @@ export default function Home() {
     const userMessage = rawText.trim();
     if (!userMessage) return;
 
+    const priorIntent = intent;
+    const wasPendingClarification = pendingClarification;
+
     pushChat("user", userMessage);
     setDraft("");
     setIsWorking(true);
@@ -160,7 +208,7 @@ export default function Home() {
       const res = await fetch("/api/intent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMessage, priorIntent: intent }),
+        body: JSON.stringify({ message: userMessage, priorIntent }),
       });
       const data = await res.json();
       if (!res.ok)
@@ -172,6 +220,7 @@ export default function Home() {
         // Deterministic guard: an unsupported turn must never touch the
         // active camping intent, regardless of what the model returned —
         // enforced here in code, not merely assumed from prompt behavior.
+        pushEvent(deriveUnsupportedEvent());
         pushAttention(
           "unsupported",
           "Outside what I can help with",
@@ -181,23 +230,43 @@ export default function Home() {
         return;
       }
 
+      if (wasPendingClarification) {
+        pushEvent(deriveClarificationResolvedEvent());
+        setPendingClarification(false);
+      }
+
+      const intentEvent = deriveIntentEvent(
+        priorIntent,
+        interpretation.intent,
+        tripEstablished,
+      );
+      if (intentEvent) {
+        pushEvent(intentEvent);
+        if (intentEvent.type === "trip_established") setTripEstablished(true);
+      }
       setIntent(interpretation.intent);
 
       if (interpretation.status === "needs_clarification") {
+        const question =
+          interpretation.clarification?.question ??
+          "Could you tell me a bit more about your trip?";
+        pushEvent(deriveClarificationRequestedEvent(question));
         pushAttention(
           "clarification",
           "Needs your input",
-          interpretation.clarification?.question ??
-            "Could you tell me a bit more about your trip?",
+          question,
           interpretation.clarification?.quickReplies,
         );
+        setPendingClarification(true);
         return;
       }
 
       // actionable
+      pushEvent(deriveEvaluationPerformedEvent(unavailableIds));
       const result = evaluateCampsites(interpretation.intent, unavailableIds);
       setEvaluation(result);
       setCandidateIndex(0);
+      pushEvent(deriveRecommendationSelectedEvent(result));
       announceEvaluation(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -222,8 +291,16 @@ export default function Home() {
     pushChat("agent", "Continuing with your search.");
   }
 
-  /** Shared by Candidate Reject, Unsupported "Never mind", and No Match decline. */
+  /** Unsupported "Never mind" and No Match decline — no recommendation existed to reject. */
   function handleDecline() {
+    pushEvent(deriveTaskClosedEvent("declined"));
+    setView("closing");
+  }
+
+  /** Candidate Reject — an actual recommendation was on the table. */
+  function handleRejectCandidate() {
+    pushEvent(deriveRecommendationRejectedEvent());
+    pushEvent(deriveTaskClosedEvent("declined"));
     setView("closing");
   }
 
@@ -232,7 +309,10 @@ export default function Home() {
     const { intent: widenedIntent, widened } = widenSearch(intent, evaluation);
     if (!widened) return;
 
+    pushEvent(deriveRequirementWidenedEvent(widened));
     setIntent(widenedIntent);
+
+    pushEvent(deriveEvaluationPerformedEvent(unavailableIds));
     const result = evaluateCampsites(widenedIntent, unavailableIds);
     setEvaluation(result);
     setCandidateIndex(0);
@@ -240,6 +320,7 @@ export default function Home() {
       "agent",
       `I widened the search — "${widened}" is now flexible instead of required.`,
     );
+    pushEvent(deriveRecommendationSelectedEvent(result));
     announceEvaluation(result);
   }
 
@@ -258,13 +339,18 @@ export default function Home() {
     if (!activeCandidate) return;
     const lost = activeCandidate;
 
+    pushEvent(deriveAvailabilityChangedEvent(lost));
+    pushEvent(deriveCandidateExcludedEvent(lost));
+
     const nextUnavailable = new Set(unavailableIds);
     nextUnavailable.add(lost.campsite.id);
     setUnavailableIds(nextUnavailable);
 
+    pushEvent(deriveEvaluationPerformedEvent(nextUnavailable));
     const adapted = evaluateCampsites(intent, nextUnavailable);
     setEvaluation(adapted);
     setCandidateIndex(0);
+    pushEvent(deriveReplacementSelectedEvent(adapted, 0));
 
     const { lossMessage, adaptedMessage } = buildRecoveryMessages(
       lost,
@@ -285,34 +371,43 @@ export default function Home() {
    */
   function handleAccept() {
     if (!activeCandidate) return;
-    setReservation(
-      stageReservation(activeCandidate.campsite, intent.guestCount),
+    pushEvent(deriveRecommendationAcceptedEvent(activeCandidate));
+    const { reservation: staged, event } = stageReservation(
+      activeCandidate.campsite,
+      intent.guestCount,
     );
+    updateReservation(staged);
+    pushEvent(event);
     setView("reservation");
   }
 
   function handleRequestAlternative() {
-    if (!canRequestAlternative) return;
-    setCandidateIndex((i) => i + 1);
+    if (!canRequestAlternative || !evaluation) return;
+    pushEvent(deriveAlternativeRequestedEvent());
+    const nextIndex = candidateIndex + 1;
+    setCandidateIndex(nextIndex);
+    pushEvent(deriveReplacementSelectedEvent(evaluation, nextIndex));
   }
 
   function handleReserveAttempt() {
-    setReservation((r) =>
-      r ? transitionReservation(r, { type: "RESERVE_ATTEMPT" }) : r,
-    );
+    if (!reservation) return;
+    const { reservation: next, event } = transitionReservation(reservation, {
+      type: "RESERVE_ATTEMPT",
+    });
+    updateReservation(next);
+    pushEvent(event);
   }
 
   function handleAddPaymentMethod() {
     // Mocked payment method on file — no real payment integration (PRD §9 /
     // Build Brief: no real payment processing for this POC).
-    setReservation((r) =>
-      r
-        ? transitionReservation(r, {
-            type: "ADD_PAYMENT_METHOD",
-            label: "Visa •••• 4471",
-          })
-        : r,
-    );
+    if (!reservation) return;
+    const { reservation: next, event } = transitionReservation(reservation, {
+      type: "ADD_PAYMENT_METHOD",
+      label: "Visa •••• 4471",
+    });
+    updateReservation(next);
+    pushEvent(event);
   }
 
   function clearAuthorizeTimeout() {
@@ -324,36 +419,58 @@ export default function Home() {
 
   /** Dialog's own "Reserve Site X — $Y" click: begins the simulated commit. */
   function handleBeginAuthorize() {
-    setReservation((r) => {
-      if (!r) return r;
-      const next = transitionReservation(r, { type: "BEGIN_AUTHORIZE" });
-      clearAuthorizeTimeout();
-      authorizeTimeoutRef.current = setTimeout(() => {
-        // Only the explicit AUTHORIZE event can produce "reserved" — this
-        // is that one call site, gated on the reservation still being in
-        // "authorizing" so a cancel that fired during the delay wins.
-        setReservation((current) =>
-          current && current.status === "authorizing"
-            ? transitionReservation(current, { type: "AUTHORIZE" })
-            : current,
-        );
-        authorizeTimeoutRef.current = null;
-      }, AUTHORIZE_DELAY_MS);
-      return next;
+    if (!reservation) return;
+    const { reservation: next, event } = transitionReservation(reservation, {
+      type: "BEGIN_AUTHORIZE",
     });
+    updateReservation(next);
+    pushEvent(event);
+
+    clearAuthorizeTimeout();
+    authorizeTimeoutRef.current = setTimeout(() => {
+      // Only the explicit AUTHORIZE event can produce "reserved" — this is
+      // that one call site, gated on the reservation still being in
+      // "authorizing" so a cancel that fired during the delay wins. Reads
+      // the ref, not the closed-over `reservation`, so it always sees the
+      // latest value.
+      const current = reservationRef.current;
+      if (current && current.status === "authorizing") {
+        const { reservation: reserved, event: reservedEvent } =
+          transitionReservation(current, { type: "AUTHORIZE" });
+        updateReservation(reserved);
+        pushEvent(reservedEvent);
+        pushEvent(deriveTaskClosedEvent("reserved"));
+      }
+      authorizeTimeoutRef.current = null;
+    }, AUTHORIZE_DELAY_MS);
   }
 
   function handleCancelAuthorization() {
     clearAuthorizeTimeout();
-    setReservation((r) =>
-      r ? transitionReservation(r, { type: "CANCEL_AUTHORIZATION" }) : r,
-    );
+    if (!reservation) return;
+    const { reservation: next, event } = transitionReservation(reservation, {
+      type: "CANCEL_AUTHORIZATION",
+    });
+    updateReservation(next);
+    pushEvent(event);
+  }
+
+  function handleOpenActivity() {
+    setView("activity");
+  }
+
+  function handleBackToTrip() {
+    // "search" is the only origin today — every screen with the persistent
+    // trip panel is the search view; Reservation/Authorize/Confirmed have
+    // no Trip Panel and no "View activity" entry point per live Figma.
+    setView("search");
   }
 
   /** Full task reset (Closing's "Start a new search") — no prior state leaks into the new trip. */
   function handleStartNewSearch() {
     clearAuthorizeTimeout();
     setMessages([]);
+    setEvents([]);
     setDraft("");
     setIntent(EMPTY_TRIP_INTENT);
     setEvaluation(null);
@@ -361,7 +478,9 @@ export default function Home() {
     setUnavailableIds(new Set());
     setIsWorking(false);
     setError(null);
-    setReservation(null);
+    setPendingClarification(false);
+    setTripEstablished(false);
+    updateReservation(null);
     setView("search");
   }
 
@@ -410,6 +529,43 @@ export default function Home() {
         >
           No thanks, not right now
         </button>
+      </div>
+    );
+  }
+
+  if (view === "activity") {
+    return (
+      <div className="flex min-h-screen flex-col bg-background">
+        <Header />
+        <main className="flex-1">
+          <div className="mx-auto flex w-[560px] max-w-full flex-col items-start gap-6 pt-24">
+            <button
+              type="button"
+              onClick={handleBackToTrip}
+              className={`${text.labelMd} text-muted-foreground`}
+            >
+              ‹ Back to trip
+            </button>
+            <h1 className={`${text.displayH3} text-foreground`}>Activity</h1>
+            <div className="flex w-full flex-col items-start">
+              {events.length === 0 ? (
+                <p className={`${text.bodySm} text-muted-foreground`}>
+                  No activity yet.
+                </p>
+              ) : (
+                events.map((e, i) => (
+                  <EventRow
+                    key={e.id}
+                    description={e.description}
+                    actor={e.actor}
+                    timestamp={formatTimestamp(e.timestamp)}
+                    isLast={i === events.length - 1}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -512,13 +668,22 @@ export default function Home() {
 
             {/* Trip panel */}
             <div className="w-[420px] shrink-0 border-l border-border pl-8">
-              <p className={`${text.labelLg} mb-4 text-card-foreground`}>
-                {evaluation?.kind === "full" && showCandidateCard
-                  ? "Recommended for you"
-                  : evaluation?.kind === "compromise" && showCandidateCard
-                    ? "Closest match"
-                    : "Your trip"}
-              </p>
+              <div className="mb-4 flex items-center justify-between">
+                <p className={`${text.labelLg} text-card-foreground`}>
+                  {evaluation?.kind === "full" && showCandidateCard
+                    ? "Recommended for you"
+                    : evaluation?.kind === "compromise" && showCandidateCard
+                      ? "Closest match"
+                      : "Your trip"}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleOpenActivity}
+                  className={`${text.bodySm} text-muted-foreground underline`}
+                >
+                  View activity
+                </button>
+              </div>
 
               {intent.goalStatement && (
                 <p className={`${text.bodySm} mb-6 text-muted-foreground`}>
@@ -564,7 +729,7 @@ export default function Home() {
                       >
                         Request Alternative
                       </Button>
-                      <Button variant="link" onClick={handleDecline}>
+                      <Button variant="link" onClick={handleRejectCandidate}>
                         No thanks, I&rsquo;ll pass
                       </Button>
                     </div>

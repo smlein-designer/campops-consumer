@@ -310,3 +310,115 @@ Date: 2026-08-31
   No prompt or schema changes were needed as a result — recorded here as evidence the calibration
   guidance in the system prompt (don't ask about already-known fields, distinguish task-scope from
   match-quality) is working as intended, not as a gap that needed fixing.
+
+---
+
+**Decision: Reservation transitions return their TaskEvent from the same guarded call, not a
+separate emission step**
+Date: 2026-09-01
+Context: The standing rule for this slice is that a transition already guarded by a state-machine
+function should have its event derived at that same architectural boundary, not reproduced
+separately in the UI. `transitionReservation`/`stageReservation` were the two functions in this
+codebase that already fit that description exactly.
+Choice: Both functions now return `{ reservation, event }` instead of a bare `Reservation` — the
+event is computed inside the same switch/branch that decides the new status, using the same guard
+that would otherwise throw. Every existing call site (`page.tsx`, `smoke-test-reservation.ts`) was
+updated to destructure both fields.
+Why: This makes the invariant "no `reservation_reserved` event without a valid AUTHORIZE
+transition" true by construction — the only way to get that event object is to call
+`transitionReservation` with `{ type: "AUTHORIZE" }` on a reservation already `"authorizing"`, which
+is exactly the existing guard for the status itself. There is no code path that can produce the
+event without producing the (identically-guarded) state change alongside it.
+Impact on product/build: `scripts/smoke-test-reservation.ts` now asserts on `event.type` at every
+transition, not just `reservation.status`.
+
+---
+
+**Decision: evaluateCampsites stays a pure function; evaluation/recommendation events are derived
+at the page-level call site instead**
+Date: 2026-09-01
+Context: Unlike the reservation state machine, `evaluateCampsites` has no "guarded transition"
+concept — it's a stateless computation, and it has no way to know whether it's being called for a
+first search, a widen-search retry, an availability-loss recovery, or a request-alternative cycle,
+all of which need differently-typed events (`recommendation_selected` vs. `replacement_selected`).
+Choice: Kept `evaluateCampsites` unchanged and pure. All evaluation/recommendation/availability
+events are derived by dedicated pure functions in `src/lib/events.ts` (`deriveEvaluationPerformedEvent`,
+`deriveRecommendationSelectedEvent`, `deriveReplacementSelectedEvent`, etc.), called immediately
+after each real `evaluateCampsites`/state-mutation call site in `page.tsx` — never reconstructed
+later from chat messages.
+Why: Forcing `evaluateCampsites` to also know "why" it's being called would couple a deterministic
+data computation to UI/orchestration concerns it shouldn't need to know about. The derivers still
+satisfy the same principle (derive from real before/after facts, one clear place per concern) —
+they're just a sibling module to the evaluator rather than living inside it, which is the right
+boundary here since the "guard" that matters (never letting an excluded site re-enter, never
+letting an unverifiable requirement pass as satisfied) already lives inside `evaluateCampsites`
+itself; these events do not add a second copy of that logic, they only describe its output.
+
+---
+
+**Decision: two additional event types beyond the explicit minimum list, both directly justified**
+Date: 2026-09-01
+Context: The required event list was described as "at least" a floor, not a ceiling.
+Choice: Added `payment_method_added` (fired from `transitionReservation`'s `ADD_PAYMENT_METHOD` case)
+and `task_closed` (fired both when a decline path reaches Closing and when a reservation is actually
+reserved).
+Why: `payment_method_added` closes an otherwise-visible gap in the narrative — Missing Info detected,
+then nothing, then Authorize Booking presented with a payment method that appeared from nowhere;
+logging the moment it was added is exactly "distinguish what CampOps has done from what has only
+been proposed." `task_closed` marks a real terminal-state boundary distinct from *why* the task
+ended (declined vs. reserved) — useful if this Activity Log is ever extended to summarize completed
+tasks, and cheap to emit now since the terminal transition already exists.
+What would change this decision: If either event proves noisy in practice rather than clarifying —
+neither is a developer-telemetry event; both describe something a person would recognize as
+"something just happened."
+
+---
+
+**Decision: no "requirement removed" event — the underlying direct-manipulation interaction was
+never built**
+Date: 2026-09-01
+Context: The Design Brief and Case Study Notes describe two distinct paths for changing a
+requirement: a chat-driven "Constraint Refined" path and a direct-manipulation "Constraint Removed"
+path (clicking a chip's own remove icon). Only the chat-driven path has ever been implemented —
+`RequirementChip`'s `onRemove` prop exists on the component but has never been wired up in
+`page.tsx`; the chips rendered in the Trip Panel are display-only.
+Choice: `deriveIntentEvent` only ever produces `trip_established`/`requirement_refined` (both via
+the chat-driven merge path). No `requirement_removed` event type was added.
+Why: Per this slice's own rule 3 — "if a transition does not happen, its corresponding event must
+not appear" — there is no real removed-via-chip transition to describe. Building that interaction
+is out of scope for this slice (not requested, and it touches the Trip Panel's existing chip
+rendering, not the Activity Log). Flagging so it isn't mistaken for an oversight: this is a gap in
+an earlier slice's scope, not something silently dropped from this one.
+
+---
+
+**Decision: "View activity" appears only on the search view's Trip Panel**
+Date: 2026-09-01
+Context: The instruction was to add the entry point "to every currently implemented screen/state
+that has the persistent trip panel." Live Figma confirms Reservation Review, Authorize Booking, and
+Booking Confirmed have no Trip Panel at all (single centered column, no side panel) — only the
+search view's Clarification/Unsupported/No Match/Recommendation/Closest-match states do.
+Choice: Added exactly one "View activity" link, in the search view's Trip Panel header, reachable
+from every one of its sub-states. `handleBackToTrip` returns unconditionally to `"search"` since
+that is the only view with an entry point at all.
+Why: Matches the live design exactly rather than inventing a Trip-Panel-equivalent for screens that
+don't have one.
+
+---
+
+**Finding: React Strict Mode hazard avoided in the simulated-authorize timeout**
+Date: 2026-09-01
+Context: The dialog's Reserve click starts a deterministic delay before AUTHORIZE actually fires
+(Handoff Spec §5's Pressed/Loading requirement). The timeout callback needs the freshest
+`reservation` value (in case the user cancelled during the delay) and must push exactly one
+`reservation_reserved` event when it does fire — never zero, never two.
+Finding: A functional `setState` updater (`setReservation((current) => ...)`) is the idiomatic way
+to read fresh state inside a timeout, but React's Strict Mode intentionally invokes updater
+functions twice in development to catch impure ones — which would have called `pushEvent` (a side
+effect) twice, double-logging the reservation and the task_closed event on every real booking.
+Resolution: Introduced `reservationRef`, a ref mirrored alongside every `setReservation` call via a
+single `updateReservation()` wrapper. The timeout reads `reservationRef.current` (a plain value
+read, not a functional updater) and calls `setReservation`/`pushEvent` directly, exactly once.
+Impact on process: A reusable pattern worth remembering for this codebase — anywhere a delayed
+callback needs to both read fresh state and produce a side effect (event, network call), prefer a
+ref mirror over a functional state updater with side effects inside it.

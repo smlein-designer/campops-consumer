@@ -1,4 +1,9 @@
-import type { Campsite, Reservation, ReservationEvent } from "@/lib/schemas";
+import type {
+  Campsite,
+  Reservation,
+  ReservationEvent,
+  TaskEvent,
+} from "@/lib/schemas";
 
 /**
  * Reservation staging + the authorization state machine (PRD §6, Handoff
@@ -11,7 +16,30 @@ import type { Campsite, Reservation, ReservationEvent } from "@/lib/schemas";
  * or advancing anyway. This is the hard invariant the authorization slice
  * exists to prove: `reservation.status === "reserved"` is impossible
  * without an explicit AUTHORIZE event fired from `"authorizing"`.
+ *
+ * Both `stageReservation` and `transitionReservation` also return the real
+ * TaskEvent that transition produced (Activity Log slice) — emitted at the
+ * exact same guarded boundary as the state change itself, per the standing
+ * rule against reproducing transition logic separately in the UI. A
+ * "reservation_reserved" event can therefore never exist without the
+ * matching valid AUTHORIZE transition, by construction.
  */
+
+function makeEvent(
+  type: TaskEvent["type"],
+  actor: TaskEvent["actor"],
+  description: string,
+  relatedIds?: TaskEvent["relatedIds"],
+): TaskEvent {
+  return {
+    id: crypto.randomUUID(),
+    type,
+    actor,
+    description,
+    timestamp: Date.now(),
+    relatedIds,
+  };
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -21,11 +49,11 @@ function round2(n: number): number {
 export function stageReservation(
   campsite: Campsite,
   guestCount: number | null,
-): Reservation {
+): { reservation: Reservation; event: TaskEvent } {
   const total = round2(
     campsite.pricePerNight * campsite.nights + campsite.serviceFee,
   );
-  return {
+  const reservation: Reservation = {
     campsite,
     guestCount,
     dates: `${campsite.datesAvailable} (${campsite.nights} night${campsite.nights === 1 ? "" : "s"})`,
@@ -38,6 +66,13 @@ export function stageReservation(
     status: "staged",
     confirmationNumber: null,
   };
+  const event = makeEvent(
+    "reservation_staged",
+    "agent",
+    `Staged a reservation for ${campsite.siteName} at ${campsite.campgroundName}.`,
+    { campsiteId: campsite.id },
+  );
+  return { reservation, event };
 }
 
 /**
@@ -73,7 +108,10 @@ function deterministicConfirmationNumber(reservation: Reservation): string {
 export function transitionReservation(
   reservation: Reservation,
   event: ReservationEvent,
-): Reservation {
+): { reservation: Reservation; event: TaskEvent } {
+  const site = `${reservation.campsite.siteName} at ${reservation.campsite.campgroundName}`;
+  const relatedIds = { campsiteId: reservation.campsite.id };
+
   switch (event.type) {
     case "RESERVE_ATTEMPT": {
       if (
@@ -85,9 +123,25 @@ export function transitionReservation(
         );
       }
       const missing = computeMissingFields(reservation);
+      if (missing.length > 0) {
+        return {
+          reservation: { ...reservation, status: "incomplete" },
+          event: makeEvent(
+            "missing_info_detected",
+            "system",
+            `Missing ${missing.join(" and ").toLowerCase()} — can't authorize yet.`,
+            relatedIds,
+          ),
+        };
+      }
       return {
-        ...reservation,
-        status: missing.length > 0 ? "incomplete" : "ready_for_authorization",
+        reservation: { ...reservation, status: "ready_for_authorization" },
+        event: makeEvent(
+          "authorization_presented",
+          "agent",
+          `Presented booking details for ${site}.`,
+          relatedIds,
+        ),
       };
     }
 
@@ -98,9 +152,17 @@ export function transitionReservation(
       // Resolves the missing-info condition; returns to the resting staged
       // state so the user can attempt Reserve again.
       return {
-        ...reservation,
-        paymentMethodLabel: event.label,
-        status: "staged",
+        reservation: {
+          ...reservation,
+          paymentMethodLabel: event.label,
+          status: "staged",
+        },
+        event: makeEvent(
+          "payment_method_added",
+          "user",
+          "Added a payment method.",
+          relatedIds,
+        ),
       };
     }
 
@@ -110,7 +172,15 @@ export function transitionReservation(
           `Cannot begin authorization from status "${reservation.status}" — only valid from "ready_for_authorization".`,
         );
       }
-      return { ...reservation, status: "authorizing" };
+      return {
+        reservation: { ...reservation, status: "authorizing" },
+        event: makeEvent(
+          "authorization_initiated",
+          "user",
+          `Requested authorization to reserve ${site} for $${reservation.total.toFixed(2)}.`,
+          relatedIds,
+        ),
+      };
     }
 
     case "AUTHORIZE": {
@@ -120,9 +190,17 @@ export function transitionReservation(
         );
       }
       return {
-        ...reservation,
-        status: "reserved",
-        confirmationNumber: deterministicConfirmationNumber(reservation),
+        reservation: {
+          ...reservation,
+          status: "reserved",
+          confirmationNumber: deterministicConfirmationNumber(reservation),
+        },
+        event: makeEvent(
+          "reservation_reserved",
+          "system",
+          "Booking authorized — reservation confirmed.",
+          relatedIds,
+        ),
       };
     }
 
@@ -136,10 +214,22 @@ export function transitionReservation(
         );
       }
       // Staged data is untouched — only status reverts.
-      return { ...reservation, status: "staged" };
+      return {
+        reservation: { ...reservation, status: "staged" },
+        event: makeEvent(
+          "authorization_dismissed",
+          "user",
+          "Dismissed the authorization request.",
+          relatedIds,
+        ),
+      };
     }
 
-    default:
-      return reservation;
+    default: {
+      const exhaustive: never = event;
+      throw new Error(
+        `Unknown reservation event: ${JSON.stringify(exhaustive)}`,
+      );
+    }
   }
 }

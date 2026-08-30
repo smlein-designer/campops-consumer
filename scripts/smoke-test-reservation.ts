@@ -42,13 +42,13 @@ function acceptedCandidateReservation(): Reservation {
   };
   const result = evaluateCampsites(intent);
   const top = result.candidates[0];
-  return stageReservation(top.campsite, intent.guestCount);
+  return stageReservation(top.campsite, intent.guestCount).reservation;
 }
 
 // 1. Accepted candidate produces the correct staged reservation.
 run("Accepted candidate produces the correct staged reservation", () => {
   const site = CAMPSITES.find((c) => c.id === "blue-ridge-14")!;
-  const reservation = stageReservation(site, 4);
+  const { reservation, event } = stageReservation(site, 4);
 
   assert(
     reservation.status === "staged",
@@ -89,6 +89,14 @@ run("Accepted candidate produces the correct staged reservation", () => {
     reservation.confirmationNumber === null,
     "no confirmation number before authorization",
   );
+  assert(
+    event.type === "reservation_staged",
+    `stageReservation emits a reservation_staged event — got "${event.type}"`,
+  );
+  assert(
+    event.relatedIds?.campsiteId === site.id,
+    "the emitted event references the actual campsite",
+  );
 });
 
 // 2. Staged state is clearly not committed.
@@ -111,12 +119,16 @@ run(
     const staged = acceptedCandidateReservation();
     const before = JSON.stringify({ ...staged, status: undefined }); // compare everything except status
 
-    const attempted = transitionReservation(staged, {
+    const { reservation: attempted, event } = transitionReservation(staged, {
       type: "RESERVE_ATTEMPT",
     });
     assert(
       attempted.status === "incomplete",
       `missing payment method should yield "incomplete" — got ${attempted.status}`,
+    );
+    assert(
+      event.type === "missing_info_detected",
+      `RESERVE_ATTEMPT with missing info emits missing_info_detected — got "${event.type}"`,
     );
 
     const after = JSON.stringify({ ...attempted, status: undefined });
@@ -137,11 +149,18 @@ run("Authorization surface uses exact deterministic values", () => {
   reservation = transitionReservation(reservation, {
     type: "ADD_PAYMENT_METHOD",
     label: "Visa •••• 4471",
+  }).reservation;
+  const attempt = transitionReservation(reservation, {
+    type: "RESERVE_ATTEMPT",
   });
-  reservation = transitionReservation(reservation, { type: "RESERVE_ATTEMPT" });
+  reservation = attempt.reservation;
   assert(
     reservation.status === "ready_for_authorization",
     `complete info should reach "ready_for_authorization" — got ${reservation.status}`,
+  );
+  assert(
+    attempt.event.type === "authorization_presented",
+    `RESERVE_ATTEMPT with complete info emits authorization_presented — got "${attempt.event.type}"`,
   );
   // The values an Authorize Booking surface would display are read directly
   // off this object — assert they are exactly the staged facts, not derived
@@ -168,16 +187,22 @@ run("Dismissing authorization preserves staged state", () => {
   reservation = transitionReservation(reservation, {
     type: "ADD_PAYMENT_METHOD",
     label: "Visa •••• 4471",
-  });
-  reservation = transitionReservation(reservation, { type: "RESERVE_ATTEMPT" });
+  }).reservation;
+  reservation = transitionReservation(reservation, {
+    type: "RESERVE_ATTEMPT",
+  }).reservation;
   const beforeCancel = JSON.stringify({ ...reservation, status: undefined });
 
-  const cancelled = transitionReservation(reservation, {
+  const { reservation: cancelled, event } = transitionReservation(reservation, {
     type: "CANCEL_AUTHORIZATION",
   });
   assert(
     cancelled.status === "staged",
     `cancel should return to "staged" — got ${cancelled.status}`,
+  );
+  assert(
+    event.type === "authorization_dismissed",
+    `CANCEL_AUTHORIZATION emits authorization_dismissed — got "${event.type}"`,
   );
   const afterCancel = JSON.stringify({ ...cancelled, status: undefined });
   assert(
@@ -192,30 +217,42 @@ run("Explicit authorization transitions staged -> reserved", () => {
   reservation = transitionReservation(reservation, {
     type: "ADD_PAYMENT_METHOD",
     label: "Visa •••• 4471",
-  });
-  reservation = transitionReservation(reservation, { type: "RESERVE_ATTEMPT" });
-  reservation = transitionReservation(reservation, { type: "BEGIN_AUTHORIZE" });
+  }).reservation;
+  reservation = transitionReservation(reservation, {
+    type: "RESERVE_ATTEMPT",
+  }).reservation;
+  reservation = transitionReservation(reservation, {
+    type: "BEGIN_AUTHORIZE",
+  }).reservation;
   assert(
     reservation.status === "authorizing",
     `should be "authorizing" before AUTHORIZE — got ${reservation.status}`,
   );
 
-  reservation = transitionReservation(reservation, { type: "AUTHORIZE" });
+  const { reservation: reserved, event } = transitionReservation(reservation, {
+    type: "AUTHORIZE",
+  });
   assert(
-    reservation.status === "reserved",
-    `explicit AUTHORIZE should yield "reserved" — got ${reservation.status}`,
+    reserved.status === "reserved",
+    `explicit AUTHORIZE should yield "reserved" — got ${reserved.status}`,
   );
   assert(
-    reservation.confirmationNumber !== null,
+    reserved.confirmationNumber !== null,
     "a confirmation number is set on reservation",
+  );
+  assert(
+    event.type === "reservation_reserved",
+    `a "reservation_reserved" event exists only alongside the valid AUTHORIZE transition — got "${event.type}"`,
   );
 });
 
 // 7. No code path can reach "reserved" without authorization — every other
 // status must reject an AUTHORIZE attempt outright (throw), not silently
-// ignore it or advance anyway.
+// ignore it or advance anyway. Since the event is returned alongside the
+// reservation from the SAME call, a thrown exception means no
+// "reservation_reserved" event can ever be produced either.
 run(
-  'No code path can reach "reserved" without an explicit AUTHORIZE from "authorizing"',
+  'No code path can reach "reserved" (or its event) without an explicit AUTHORIZE from "authorizing"',
   () => {
     const base = acceptedCandidateReservation();
     const statuses: ReservationStatus[] = [
@@ -240,10 +277,16 @@ run(
 
     // The only valid starting point:
     const authorizing: Reservation = { ...base, status: "authorizing" };
-    const result = transitionReservation(authorizing, { type: "AUTHORIZE" });
+    const { reservation: result, event } = transitionReservation(authorizing, {
+      type: "AUTHORIZE",
+    });
     assert(
       result.status === "reserved",
       'AUTHORIZE from "authorizing" is the one valid path to "reserved"',
+    );
+    assert(
+      event.type === "reservation_reserved",
+      "and it is the one valid path to the reservation_reserved event",
     );
 
     // Also guard the adjacent invariant: BEGIN_AUTHORIZE must only work from
@@ -273,14 +316,15 @@ run("Repeated simulated authorization is deterministic", () => {
     reservation = transitionReservation(reservation, {
       type: "ADD_PAYMENT_METHOD",
       label: "Visa •••• 4471",
-    });
+    }).reservation;
     reservation = transitionReservation(reservation, {
       type: "RESERVE_ATTEMPT",
-    });
+    }).reservation;
     reservation = transitionReservation(reservation, {
       type: "BEGIN_AUTHORIZE",
-    });
-    return transitionReservation(reservation, { type: "AUTHORIZE" });
+    }).reservation;
+    return transitionReservation(reservation, { type: "AUTHORIZE" })
+      .reservation;
   };
   const first = build();
   const second = build();

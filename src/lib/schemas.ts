@@ -260,3 +260,67 @@ export type ReservationEvent =
   | { type: "BEGIN_AUTHORIZE" }
   | { type: "AUTHORIZE" }
   | { type: "CANCEL_AUTHORIZATION" };
+
+/**
+ * TASK EVENT — real application-event model backing the user-facing
+ * Activity Log (Handoff Spec 4.1 "Activity Log" / OOUX EVENT object).
+ * Events are emitted only at the same architectural boundary as the real
+ * state transition they describe (evaluateCampsites, transitionReservation,
+ * stageReservation, the availability-loss/widen-search/alternative
+ * handlers) — never fabricated after the fact purely for display, and
+ * never reconstructed by parsing chat messages.
+ *
+ * `actor` is a real three-way distinction, not a convenience boolean:
+ * - "user": something the person explicitly did (accept, reject, request
+ *   alternative, authorize).
+ * - "agent": CampOps' own interpretive/evaluative work (extracting intent,
+ *   ranking candidates, staging a reservation).
+ * - "system": a deterministic app/tool state change that isn't really a
+ *   judgment call by either party (availability changing, a candidate
+ *   being excluded, the reservation actually committing).
+ *
+ * `description` is plain, factual, deterministic copy — never raw
+ * function/tool names, internal model terminology, or private reasoning.
+ */
+export type EventActor = "user" | "agent" | "system";
+
+export type EventType =
+  | "trip_established"
+  | "clarification_requested"
+  | "clarification_resolved"
+  | "requirement_refined"
+  | "requirement_widened"
+  | "evaluation_performed"
+  | "recommendation_selected"
+  | "availability_changed"
+  | "candidate_excluded"
+  | "replacement_selected"
+  | "alternative_requested"
+  | "recommendation_accepted"
+  | "recommendation_rejected"
+  | "reservation_staged"
+  | "payment_method_added"
+  | "missing_info_detected"
+  | "authorization_presented"
+  | "authorization_dismissed"
+  | "authorization_initiated"
+  | "reservation_reserved"
+  | "unsupported_encountered"
+  | "task_closed";
+
+export type TaskEvent = {
+  id: string;
+  type: EventType;
+  actor: EventActor;
+  /** Human-readable, factual description — what the Event Row displays. */
+  description: string;
+  /** Epoch ms — real wall-clock time the event occurred, not fabricated. */
+  timestamp: number;
+  relatedIds?: {
+    campsiteId?: string;
+    candidateId?: string;
+    reservationId?: string;
+  };
+  /** Structured facts backing the description (for debugging/evaluation) — never private model reasoning. */
+  metadata?: Record<string, string | number | boolean | null>;
+};
