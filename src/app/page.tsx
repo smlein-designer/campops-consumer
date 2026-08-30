@@ -1,24 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Header } from "@/components/campops/header";
 import { Composer } from "@/components/campops/composer";
 import { ChatBubble, ChatRow } from "@/components/campops/chat-bubble";
 import { RequirementChip } from "@/components/campops/requirement-chip";
 import { CandidateCard } from "@/components/campops/candidate-card";
+import { ReservationReview } from "@/components/campops/reservation-review";
+import { AuthorizeBookingDialog } from "@/components/campops/authorize-booking-dialog";
 import { Button } from "@/components/ui/button";
 import { text } from "@/lib/typography";
 import { evaluateCampsites } from "@/lib/evaluate";
 import { buildRecoveryMessages } from "@/lib/recovery";
 import {
+  computeMissingFields,
+  stageReservation,
+  transitionReservation,
+} from "@/lib/reservation";
+import {
   EMPTY_TRIP_INTENT,
   type EvaluationResult,
+  type Reservation,
   type RequirementTier,
   type TripIntent,
 } from "@/lib/schemas";
 
 type Message = { id: string; sender: "user" | "agent"; text: string };
-type Stage = "active" | "accepted" | "rejected";
+type Stage = "active" | "rejected";
+type View = "search" | "reservation";
+
+// Simulated commit delay for the "authorizing" state (Handoff Spec §5's
+// Pressed/Loading requirement) — purely cosmetic; the resulting state
+// transition itself is deterministic regardless of this duration.
+const AUTHORIZE_DELAY_MS = 600;
 
 const TIER_SECTIONS: {
   key: keyof TripIntent;
@@ -62,6 +76,14 @@ export default function Home() {
   const [stage, setStage] = useState<Stage>("active");
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [view, setView] = useState<View>("search");
+  const [reservation, setReservation] = useState<Reservation | null>(null);
+  // Guards the simulated authorize delay: cleared on cancel/unmount so a
+  // stray AUTHORIZE can never fire after the user has already backed out.
+  const authorizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const hasStarted = messages.length > 0;
   const activeCandidate = evaluation?.candidates[candidateIndex] ?? null;
@@ -143,13 +165,18 @@ export default function Home() {
     ]);
   }
 
+  /**
+   * Accept stages a real Reservation from deterministic application state
+   * (the accepted Candidate's campsite + the current TripIntent's guest
+   * count) and switches to the Reservation Review screen — not a chat
+   * acknowledgment standing in for booking state.
+   */
   function handleAccept() {
     if (!activeCandidate) return;
-    setStage("accepted");
-    pushMessage(
-      "agent",
-      `Great — I'll get ${activeCandidate.campsite.siteName} at ${activeCandidate.campsite.campgroundName} ready for you. (Staging and booking come in a later slice.)`,
+    setReservation(
+      stageReservation(activeCandidate.campsite, intent.guestCount),
     );
+    setView("reservation");
   }
 
   function handleReject() {
@@ -160,6 +187,88 @@ export default function Home() {
   function handleRequestAlternative() {
     if (!canRequestAlternative) return;
     setCandidateIndex((i) => i + 1);
+  }
+
+  function handleReserveAttempt() {
+    setReservation((r) =>
+      r ? transitionReservation(r, { type: "RESERVE_ATTEMPT" }) : r,
+    );
+  }
+
+  function handleAddPaymentMethod() {
+    // Mocked payment method on file — no real payment integration (PRD §9 /
+    // Build Brief: no real payment processing for this POC).
+    setReservation((r) =>
+      r
+        ? transitionReservation(r, {
+            type: "ADD_PAYMENT_METHOD",
+            label: "Visa •••• 4471",
+          })
+        : r,
+    );
+  }
+
+  function clearAuthorizeTimeout() {
+    if (authorizeTimeoutRef.current !== null) {
+      clearTimeout(authorizeTimeoutRef.current);
+      authorizeTimeoutRef.current = null;
+    }
+  }
+
+  /** Dialog's own "Reserve Site X — $Y" click: begins the simulated commit. */
+  function handleBeginAuthorize() {
+    setReservation((r) => {
+      if (!r) return r;
+      const next = transitionReservation(r, { type: "BEGIN_AUTHORIZE" });
+      clearAuthorizeTimeout();
+      authorizeTimeoutRef.current = setTimeout(() => {
+        // Only the explicit AUTHORIZE event can produce "reserved" — this
+        // is that one call site, gated on the reservation still being in
+        // "authorizing" so a cancel that fired during the delay wins.
+        setReservation((current) =>
+          current && current.status === "authorizing"
+            ? transitionReservation(current, { type: "AUTHORIZE" })
+            : current,
+        );
+        authorizeTimeoutRef.current = null;
+      }, AUTHORIZE_DELAY_MS);
+      return next;
+    });
+  }
+
+  function handleCancelAuthorization() {
+    clearAuthorizeTimeout();
+    setReservation((r) =>
+      r ? transitionReservation(r, { type: "CANCEL_AUTHORIZATION" }) : r,
+    );
+  }
+
+  function handleCancelReservation() {
+    clearAuthorizeTimeout();
+    setReservation(null);
+    setView("search");
+  }
+
+  if (view === "reservation" && reservation) {
+    return (
+      <div className="flex min-h-screen flex-col bg-background">
+        <Header />
+        <main className="flex-1">
+          <ReservationReview
+            reservation={reservation}
+            missingFields={computeMissingFields(reservation)}
+            onReserveAttempt={handleReserveAttempt}
+            onAddPaymentMethod={handleAddPaymentMethod}
+            onCancelReservation={handleCancelReservation}
+          />
+        </main>
+        <AuthorizeBookingDialog
+          reservation={reservation}
+          onCancel={handleCancelAuthorization}
+          onAuthorize={handleBeginAuthorize}
+        />
+      </div>
+    );
   }
 
   return (
@@ -319,9 +428,7 @@ export default function Home() {
                     </div>
                   ) : (
                     <p className={`${text.bodySm} mt-4 text-muted-foreground`}>
-                      {stage === "accepted"
-                        ? "Selected — staged for a later slice."
-                        : "Search ended."}
+                      Search ended.
                     </p>
                   )}
                 </>

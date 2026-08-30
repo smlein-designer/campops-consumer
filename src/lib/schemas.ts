@@ -85,6 +85,10 @@ export type Campsite = {
   seclusion: "high" | "medium" | "low";
   cancellationPolicy: string;
   datesAvailable: string;
+  /** Fixed booking length this site's `datesAvailable` window represents. */
+  nights: number;
+  /** Flat service fee added to the nightly total (Build Brief §5 "fees where relevant"). */
+  serviceFee: number;
 };
 
 /**
@@ -152,3 +156,56 @@ export type EvaluationResult = {
   kind: MatchType;
   candidates: Candidate[];
 };
+
+/**
+ * RESERVATION — explicit application state for a staged/committed booking
+ * (OOUX RESERVATION object; PRD §6 Booking Authorization Requirements).
+ * This is real structured state, not chat text: the reservation the user
+ * sees is always read from this object, never re-derived from conversation.
+ *
+ * Status is a five-value state, deliberately not collapsed into one or two
+ * booleans (each has distinct meaning and distinct allowed transitions —
+ * see `transitionReservation` in `src/lib/reservation.ts`, the ONLY
+ * function permitted to change `status`):
+ * - "staged": accepted and prepared, resting state on Reservation Review.
+ * - "incomplete": a reserve attempt found required info missing (surfaces
+ *   the Missing Info treatment); staged data is preserved, not discarded.
+ * - "ready_for_authorization": required info is complete; the Authorize
+ *   Booking dialog is open, awaiting the user's explicit decision.
+ * - "authorizing": the user has clicked the dialog's own commit action; a
+ *   brief, deterministic simulated-commit state (Handoff Spec 5's
+ *   "Pressed/Loading" requirement) — not yet reserved.
+ * - "reserved": the explicit AUTHORIZE event has resolved. This is the
+ *   ONLY status that represents a committed, charged booking.
+ */
+export type ReservationStatus =
+  | "staged"
+  | "incomplete"
+  | "ready_for_authorization"
+  | "authorizing"
+  | "reserved";
+
+export type Reservation = {
+  campsite: Campsite;
+  /** From TripIntent at staging time — may be null if the user never stated a headcount. */
+  guestCount: number | null;
+  /** Display-formatted date range, e.g. "Sept 12 – 14 (2 nights)". */
+  dates: string;
+  nights: number;
+  nightlyRate: number;
+  serviceFee: number;
+  total: number;
+  cancellationPolicy: string;
+  /** null = no payment method on file yet — the one required field the live Figma actually models as missing. */
+  paymentMethodLabel: string | null;
+  status: ReservationStatus;
+  /** Set only by a successful AUTHORIZE transition; deterministic, never random. */
+  confirmationNumber: string | null;
+};
+
+export type ReservationEvent =
+  | { type: "RESERVE_ATTEMPT" }
+  | { type: "ADD_PAYMENT_METHOD"; label: string }
+  | { type: "BEGIN_AUTHORIZE" }
+  | { type: "AUTHORIZE" }
+  | { type: "CANCEL_AUTHORIZATION" };

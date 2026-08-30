@@ -25,7 +25,9 @@ export const CAMPSITES: Campsite[] = [
     seclusion: "medium",
     cancellationPolicy:
       "Free cancellation until Sept 1. After that, one night's rate is non-refundable.",
-    datesAvailable: "Sept 12–14",
+    datesAvailable: "Sept 12 – 14",
+    nights: 2,
+    serviceFee: 18.5,
   },
   {
     id: "blue-ridge-22",
@@ -43,7 +45,9 @@ export const CAMPSITES: Campsite[] = [
     seclusion: "low",
     cancellationPolicy:
       "Free cancellation until Sept 1. After that, one night's rate is non-refundable.",
-    datesAvailable: "Sept 12–14",
+    datesAvailable: "Sept 12 – 14",
+    nights: 2,
+    serviceFee: 22.0,
   },
   {
     id: "silver-creek-7",
@@ -61,7 +65,9 @@ export const CAMPSITES: Campsite[] = [
     seclusion: "high",
     cancellationPolicy:
       "Free cancellation until Sept 5. After that, one night's rate is non-refundable.",
-    datesAvailable: "Sept 12–14",
+    datesAvailable: "Sept 12 – 14",
+    nights: 2,
+    serviceFee: 24.5,
   },
   {
     id: "cedar-hollow-3",
@@ -79,7 +85,9 @@ export const CAMPSITES: Campsite[] = [
     seclusion: "high",
     cancellationPolicy:
       "Free cancellation until Sept 1. After that, one night's rate is non-refundable.",
-    datesAvailable: "Sept 12–14",
+    datesAvailable: "Sept 12 – 14",
+    nights: 2,
+    serviceFee: 12.0,
   },
   {
     id: "pine-ridge-9",
@@ -97,6 +105,8 @@ export const CAMPSITES: Campsite[] = [
     seclusion: "low",
     cancellationPolicy:
       "Free cancellation until Sept 1. After that, one night's rate is non-refundable.",
-    datesAvailable: "Sept 12–14",
+    datesAvailable: "Sept 12 – 14",
+    nights: 2,
+    serviceFee: 15.0,
   },
 ];

@@ -29,6 +29,7 @@
   --color-border: var(--border);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
   --color-success: var(--success);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -83,8 +84,9 @@
   --muted-foreground: #6b7280;
   --accent: #e8f1f6; /* sky/tint */
   --accent-foreground: #16324a;
-  --destructive: #dc2626; /* contrast-checked 6.80:1 against card background */
+  --destructive: #dc2626; /* Style Guide token; live Authorize/Reservation Review screens' raw fallback shows #b21d1d instead — flagged in docs/implementation-decisions.md, kept the Style Guide value */
   --destructive-foreground: #ffffff;
+  --destructive-soft: #fef2f2; /* Reservation Review's Error Banner / Payment Method Row (Error) background, from live Figma node 35:270 */
   --success: #16a34a; /* "Availability verified" indicator only — hex not specified in spec, chosen distinct from primary */
   --neutral-soft: #f3f4f6; /* Preference-tier chip background, lowest-emphasis UI */
   --neutral-foreground: #374151;
