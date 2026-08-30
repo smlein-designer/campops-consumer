@@ -1,7 +1,8 @@
 import { X } from "lucide-react";
 import { text } from "@/lib/typography";
+import type { RequirementTier } from "@/lib/schemas";
 
-export type RequirementTier = "hard" | "flexible" | "preference" | "priority";
+export type { RequirementTier };
 
 const TIER_STYLES: Record<RequirementTier, string> = {
   hard: "bg-earth text-primary-foreground",

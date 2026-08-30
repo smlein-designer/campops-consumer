@@ -88,6 +88,36 @@ export type Campsite = {
 };
 
 /**
+ * Requirement tiers, shared by TripIntent's four requirement arrays, the
+ * Requirement Chip component, and per-constraint evaluation results.
+ */
+export type RequirementTier = "hard" | "flexible" | "preference" | "priority";
+
+/**
+ * Explicit three-state result of checking one requirement against one
+ * campsite (Build Brief-driven rule, captured 2026-08-30 verification):
+ * a hard requirement that cannot be verified must never be silently
+ * treated as satisfied. "unverifiable" is a distinct, visible state —
+ * never conflated with "satisfied".
+ */
+export type ConstraintStatus = "satisfied" | "unsatisfied" | "unverifiable";
+
+export type ConstraintCheck = {
+  label: string;
+  tier: RequirementTier;
+  status: ConstraintStatus;
+};
+
+/**
+ * How a candidate relates to the trip's hard requirements:
+ * - "full": every hard requirement is confirmed satisfied.
+ * - "compromise": no hard requirement is confirmed unsatisfied, but at
+ *   least one could not be verified — never presented as a full match.
+ * - "no_match": at least one hard requirement is confirmed unsatisfied.
+ */
+export type MatchType = "full" | "compromise" | "no_match";
+
+/**
  * CANDIDATE — a ranked recommendation produced by deterministic evaluation
  * (OOUX CANDIDATE object). `explanation` is generated from the structured
  * diff between the campsite and the trip intent (Build Brief §7: "recommendation
@@ -99,7 +129,26 @@ export type Candidate = {
   campsite: Campsite;
   rank: number;
   score: number;
+  matchType: MatchType;
+  checks: ConstraintCheck[];
+  /** Satisfied hard-requirement labels — Candidate Card's "Preserved" chips. */
   preserved: string[];
-  compromise?: string;
+  /**
+   * Human-readable compromise descriptions (e.g. "Couldn't verify:
+   * Pet-friendly", "Doesn't satisfy: Waterfront") — Candidate Card's
+   * "Compromise" chip(s). Empty for matchType "full".
+   */
+  compromises: string[];
   explanation: string;
+};
+
+/**
+ * Result of evaluating a TripIntent against the dataset. `kind` is the best
+ * matchType achieved by any available candidate. For kind "no_match",
+ * `candidates` are the closest available sites shown for transparency —
+ * none of them should be presented to the user as a confident recommendation.
+ */
+export type EvaluationResult = {
+  kind: MatchType;
+  candidates: Candidate[];
 };

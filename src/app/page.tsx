@@ -4,16 +4,14 @@ import { useState } from "react";
 import { Header } from "@/components/campops/header";
 import { Composer } from "@/components/campops/composer";
 import { ChatBubble, ChatRow } from "@/components/campops/chat-bubble";
-import {
-  RequirementChip,
-  type RequirementTier,
-} from "@/components/campops/requirement-chip";
+import { RequirementChip } from "@/components/campops/requirement-chip";
 import { CandidateCard } from "@/components/campops/candidate-card";
 import { text } from "@/lib/typography";
 import { evaluateCampsites } from "@/lib/evaluate";
 import {
   EMPTY_TRIP_INTENT,
-  type Candidate,
+  type EvaluationResult,
+  type RequirementTier,
   type TripIntent,
 } from "@/lib/schemas";
 
@@ -34,15 +32,27 @@ const TIER_SECTIONS: {
   { key: "priorities", label: "Priorities", tier: "priority" },
 ];
 
+function agentSummary(evaluation: EvaluationResult): string {
+  const top = evaluation.candidates[0];
+  if (evaluation.kind === "full" && top) {
+    return `Got it. Based on what you've told me, ${top.campsite.siteName} at ${top.campsite.campgroundName} looks like the strongest fit.`;
+  }
+  if (evaluation.kind === "compromise" && top) {
+    return `I couldn't find an exact match, but ${top.campsite.siteName} at ${top.campsite.campgroundName} is the closest option — I've flagged what I couldn't confirm.`;
+  }
+  return "Nothing in the current dataset satisfies every requirement you've given me. You can widen a requirement or ask me to try something different.";
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [intent, setIntent] = useState<TripIntent>(EMPTY_TRIP_INTENT);
-  const [candidate, setCandidate] = useState<Candidate | null>(null);
+  const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const hasStarted = messages.length > 0;
+  const topCandidate = evaluation?.candidates[0] ?? null;
 
   async function handleSubmit() {
     const userMessage = draft.trim();
@@ -68,18 +78,15 @@ export default function Home() {
       const updatedIntent: TripIntent = data.intent;
       setIntent(updatedIntent);
 
-      const ranked = evaluateCampsites(updatedIntent);
-      const top = ranked[0] ?? null;
-      setCandidate(top);
+      const result = evaluateCampsites(updatedIntent);
+      setEvaluation(result);
 
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           sender: "agent",
-          text: top
-            ? `Got it. Based on what you've told me, ${top.campsite.siteName} at ${top.campsite.campgroundName} looks like the strongest fit.`
-            : "I understood your request, but nothing in the current dataset satisfies your hard requirements.",
+          text: agentSummary(result),
         },
       ]);
     } catch (err) {
@@ -148,7 +155,13 @@ export default function Home() {
             {/* Trip panel */}
             <div className="w-[420px] shrink-0 border-l border-border pl-8">
               <p className={`${text.labelLg} mb-4 text-card-foreground`}>
-                {candidate ? "Recommended for you" : "Your trip"}
+                {evaluation?.kind === "full"
+                  ? "Recommended for you"
+                  : evaluation?.kind === "compromise"
+                    ? "Closest match"
+                    : evaluation?.kind === "no_match"
+                      ? "No exact match"
+                      : "Your trip"}
               </p>
 
               {intent.goalStatement && (
@@ -163,20 +176,62 @@ export default function Home() {
                 </p>
               )}
 
-              {candidate ? (
-                <CandidateCard
-                  location={candidate.campsite.campgroundName}
-                  siteName={candidate.campsite.siteName}
-                  siteType={candidate.campsite.siteType}
-                  capacityValue={`${candidate.campsite.capacity} guests`}
-                  distanceValue={`${candidate.campsite.distanceMiles} mi`}
-                  datesValue={candidate.campsite.datesAvailable}
-                  priceValue={`$${candidate.campsite.pricePerNight}/night`}
-                  amenities={candidate.campsite.amenities}
-                  preserved={candidate.preserved}
-                  compromise={candidate.compromise}
-                  explanation={candidate.explanation}
-                />
+              {evaluation?.kind === "no_match" ? (
+                <div className="flex flex-col gap-4">
+                  <p className={`${text.bodySm} text-muted-foreground`}>
+                    None of the campsites in the current dataset satisfy every
+                    hard requirement you&rsquo;ve given me. Here&rsquo;s how the
+                    closest options fall short:
+                  </p>
+                  <div className="flex flex-col gap-3">
+                    {evaluation.candidates.slice(0, 2).map((c) => (
+                      <div
+                        key={c.campsite.id}
+                        className="rounded-md border border-border bg-card p-4"
+                      >
+                        <p className={`${text.labelSm} text-card-foreground`}>
+                          {c.campsite.siteName} · {c.campsite.campgroundName}
+                        </p>
+                        <ul className="mt-1 list-inside list-disc">
+                          {c.compromises.map((reason) => (
+                            <li
+                              key={reason}
+                              className={`${text.bodySm} text-destructive`}
+                            >
+                              {reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                  <p className={`${text.bodySm} text-muted-foreground`}>
+                    Try widening a requirement or telling me what you&rsquo;d be
+                    willing to change.
+                  </p>
+                </div>
+              ) : topCandidate ? (
+                <>
+                  {evaluation?.kind === "compromise" && (
+                    <p className={`${text.bodySm} mb-4 text-muted-foreground`}>
+                      No exact match — here&rsquo;s the closest option, with
+                      what I couldn&rsquo;t confirm flagged below.
+                    </p>
+                  )}
+                  <CandidateCard
+                    location={topCandidate.campsite.campgroundName}
+                    siteName={topCandidate.campsite.siteName}
+                    siteType={topCandidate.campsite.siteType}
+                    capacityValue={`${topCandidate.campsite.capacity} guests`}
+                    distanceValue={`${topCandidate.campsite.distanceMiles} mi`}
+                    datesValue={topCandidate.campsite.datesAvailable}
+                    priceValue={`$${topCandidate.campsite.pricePerNight}/night`}
+                    amenities={topCandidate.campsite.amenities}
+                    preserved={topCandidate.preserved}
+                    compromises={topCandidate.compromises}
+                    explanation={topCandidate.explanation}
+                  />
+                </>
               ) : (
                 <div className="flex flex-col gap-6">
                   {TIER_SECTIONS.map(({ key, label, tier }) => {

@@ -42,7 +42,7 @@ export function CandidateCard({
   priceValue,
   amenities,
   preserved,
-  compromise,
+  compromises,
   explanation,
 }: {
   location: string;
@@ -54,7 +54,7 @@ export function CandidateCard({
   priceValue: string;
   amenities: string[];
   preserved: string[];
-  compromise?: string;
+  compromises: string[];
   explanation: string;
 }) {
   return (
@@ -132,9 +132,9 @@ export function CandidateCard({
             {preserved.map((label) => (
               <RequirementChip key={label} label={label} tier="hard" />
             ))}
-            {compromise && (
-              <RequirementChip label={compromise} tier="flexible" />
-            )}
+            {compromises.map((label) => (
+              <RequirementChip key={label} label={label} tier="flexible" />
+            ))}
           </div>
         </div>
 
