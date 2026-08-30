@@ -37,13 +37,11 @@ export function ReservationReview({
   missingFields,
   onReserveAttempt,
   onAddPaymentMethod,
-  onCancelReservation,
 }: {
   reservation: Reservation;
   missingFields: string[];
   onReserveAttempt: () => void;
   onAddPaymentMethod: () => void;
-  onCancelReservation: () => void;
 }) {
   const { campsite } = reservation;
   const reserveLabel = `Reserve ${campsite.siteName} — $${reservation.total.toFixed(2)}`;
@@ -179,16 +177,15 @@ export function ReservationReview({
         <Button onClick={onReserveAttempt}>{reserveLabel}</Button>
       </div>
 
-      {/* Cancel Reservation's own confirm dialog is out of scope for this
-          slice (not in the listed component set) — this discards the
-          staged reservation directly. See docs/implementation-decisions.md. */}
-      <button
-        type="button"
-        onClick={onCancelReservation}
-        className={`${text.labelSm} text-destructive`}
+      {/* Cancellation is consequential and requires its own confirmation
+          flow, which is out of scope for this slice — inert rather than
+          functional until that flow is intentionally implemented (never
+          an immediate, unconfirmed discard). See docs/implementation-decisions.md. */}
+      <span
+        className={`${text.labelSm} cursor-not-allowed text-muted-foreground opacity-60`}
       >
         Cancel reservation
-      </button>
+      </span>
     </div>
   );
 }

@@ -46,9 +46,11 @@ status the model must commit to is inspectable, testable, and matches the PRD's 
 rather than a fuzzy threshold.
 What would change this decision: If Clarification turns out to need finer-grained states than a
 binary actionable/needs_clarification split (e.g. partial actionability).
-Status: **Not implemented.** Deferred until the Clarification screen is actually being built, per
-explicit instruction not to build Clarification ahead of schedule. This entry exists so the
-decision isn't lost or re-litigated when that slice starts.
+Status: **Implemented 2026-08-31** as planned — a three-value `status: "actionable" |
+"needs_clarification" | "unsupported"` (the third value added once Unsupported was in scope too),
+wrapping TripIntent in `IntentInterpretation` (`src/lib/schemas.ts`), produced by the same
+structured-output call. No confidence field was added. See the new decisions below for what changed
+in the implementation.
 
 ---
 
@@ -126,6 +128,11 @@ about, just inverted (implying activity that isn't happening, rather than hiding
 
 ---
 
+**RESOLVED (2026-08-31):** kept `#dc2626`, the Style Guide token. Confirmed: treat the Figma
+mismatch as a design-file cleanup item (the individual authorization screens' raw `#b21d1d`
+fallback should eventually be re-bound to the shared token) rather than a code change. No further
+action needed here.
+
 **Flag (not silently resolved): `destructive` red differs between the Style Guide page and the
 live Authorize/Reservation Review screens**
 Date: 2026-08-30
@@ -141,6 +148,10 @@ question): kept `#dc2626`, the Style Guide's canonical token value, on the theor
 Flagging rather than asserting this is correct: if `#b21d1d` is actually the intended, more
 recent value across the authorization-flow screens specifically, the fix is a one-line token change
 in `globals.css` — please confirm which is right.
+
+**RESOLVED (2026-08-31):** kept `neutral-soft` for the Staged badge. Confirmed: no new semantic
+token should be invented solely to reproduce Figma's current raw gray — document as a design-system
+cleanup item (the badge instance should eventually bind to a real token) rather than a code change.
 
 **Flag (not silently resolved): "Staged · Not yet booked" badge uses a raw neutral gray in Figma,
 not this project's documented `secondary` token**
@@ -180,9 +191,21 @@ low-risk default consistent with your own standing rules rather than a novel pro
 kept moving rather than blocking the slice on it — but please tell me if you'd rather this reverted
 to payment-method-only, matching the literal mock exactly.
 
+**RESOLVED (2026-08-31):** confirmed intentional — guestCount stays required booking information,
+per the PRD's explicit requirement that guest count be part of the booking-ready state. Not reverted.
+
 ---
 
-**Decision: "Cancel reservation" discards immediately; no separate confirm dialog built this slice**
+**SUPERSEDED (2026-08-31):** the immediate-discard behavior below was removed per explicit
+instruction. Cancellation is consequential and must not happen without explicit authorization; since
+the full cancellation confirmation flow is still out of scope, "Cancel reservation" is now rendered
+as an inert, non-interactive label (a `<span>`, not a button — verified via Playwright that clicking
+it has no effect and the user stays on Reservation Review) rather than a functional immediate
+discard. It will become functional only when its proper confirmation flow is intentionally built.
+"Edit reservation" remains inert for the same reason it always was (no edit-fields form exists).
+
+**Decision (superseded, kept for history): "Cancel reservation" discards immediately; no separate
+confirm dialog built this slice**
 Date: 2026-08-31
 Context: Live Figma has a dedicated "Cancel Reservation" confirmation dialog (destructive confirm,
 reachable from the "Cancel reservation" link). It was not in this slice's listed component set
@@ -210,3 +233,80 @@ Why: They share the same page shell and card layout closely enough (single cente
 Summary Row list shape, same badge position) that duplicating the shell three times seemed like
 needless repetition for a POC; the underlying `Reservation` state model still keeps every status
 distinct, which is the part that actually matters for the slice's invariants.
+
+---
+
+**Decision: No Match moved from the Trip Panel into a chat-column Attention Card**
+Date: 2026-08-31
+Context: The prior slice's No Match implementation rendered its summary as an ad hoc block inside
+the Trip Panel — the real Attention Card component didn't exist yet at that point. Live Figma
+(node 50:259) places No Match's Attention Card in the Messages/chat column instead, exactly like
+Clarification and Unsupported, with the Trip Panel falling back to plain requirement chips.
+Choice: Rebuilt No Match to push an `AttentionCard` entry into the same chat timeline as
+Clarification/Unsupported (eyebrow "No exact match found"), and reverted the Trip Panel to its
+plain chip fallback whenever `evaluation.kind !== "full"/"compromise"` — matching Figma exactly and
+satisfying this slice's explicit requirement that all three states share one Attention Card
+treatment rather than three different visual patterns.
+Impact on product/build: `src/app/page.tsx`'s message model became a tagged union (`kind: "chat" |
+"attention"`) instead of a flat chat-only list; only the latest message renders live action buttons
+(clarification quick replies / unsupported Continue+Never mind / no-match Widen+Change+decline),
+since once a newer message is pushed the prior attention state is naturally superseded — no
+separate "resolved" flag was needed.
+
+---
+
+**Decision: Widen Search and Change a Requirement are deterministic, not model calls**
+Date: 2026-08-31
+Context: Figma's No Match example shows a concrete action, "Widen search to 100 mi" — a specific,
+targeted change, not a vague "try something else."
+Choice: `widenSearch` (`src/lib/no-match.ts`) is a pure function that moves exactly one
+confirmed-failing hard requirement (one already known, from `evaluateCampsites`'s own compromise
+labels, to be blocking every candidate) into `flexibleConstraints`, then the app re-evaluates. If
+nothing failing maps to a literal `hardRequirements` entry (e.g. only the synthetic capacity check
+is failing), it's a safe no-op rather than a guess. "Change a requirement" simply focuses the
+composer — CampOps' established edit surface (Case Study Decision 14) — rather than opening any new
+UI.
+Why: This is a real state transition driven by facts the evaluator already proved, not a screen-only
+simulation or an invented model action — consistent with the standing rule that Authorization and
+other consequence-adjacent controls must be enforced in transition logic. Widening happens to be
+low-consequence, but the same discipline (touch only what's proven to be the cause, never guess)
+applies.
+Impact on product/build: `scripts/smoke-test-no-match.ts` asserts Widen Search changes exactly one
+field and that the no-op case leaves intent byte-identical.
+
+---
+
+**Decision: Unsupported turns cannot mutate TripIntent, enforced in code, not just prompted**
+Date: 2026-08-31
+Context: The model is instructed to always return its best merged TripIntent regardless of status,
+including on unsupported turns (useful for defense-in-depth logging/visibility), and live testing
+confirmed it reliably does echo the prior intent unchanged. But "an unsupported side request must
+not destroy or silently replace the active camping intent" is a consequence-sensitive guarantee this
+project should not rest on model behavior alone for.
+Choice: `submitMessage` in `src/app/page.tsx` never calls `setIntent()` when
+`interpretation.status === "unsupported"` — the returned `intent` field is read only for the
+(passing) live-test assertion that the model itself preserves it, never applied to state.
+Why: "Application handles truth and consequence-sensitive state" — even though the model behaved
+correctly in testing, trusting it to never touch intent on an unsupported turn is exactly the kind
+of assumption this project has repeatedly found worth replacing with a deterministic guard (see the
+guestCount capacity-enforcement finding from the constraint-integrity slice).
+
+---
+
+**Finding: live model calibration for status classification (verified, no changes needed)**
+Date: 2026-08-31
+`scripts/smoke-test-intent-status.ts` verified against the real GPT-5.4 mini endpoint:
+
+- A contentless message ("We want to go camping soon.") correctly produced `needs_clarification`
+  with a specific question and sensible quick replies.
+- A two-turn clarification exchange correctly merged the answer into the existing intent
+  (`guestCount` and the pet-friendly hard requirement survived from turn A into turn B untouched)
+  and correctly flipped to `actionable` once dates were supplied.
+- "Can you also book my flights and rental car?" correctly produced `unsupported` (not
+  `needs_clarification`) with a calm, plain-language reason, both as a fresh request and as a
+  follow-up after an established trip — and in the latter case the model's own returned `intent`
+  still carried the established guestCount/dates/requirements unchanged, matching the code-level
+  guard above.
+  No prompt or schema changes were needed as a result — recorded here as evidence the calibration
+  guidance in the system prompt (don't ask about already-known fields, distinguish task-scope from
+  match-quality) is working as intended, not as a gap that needed fixing.

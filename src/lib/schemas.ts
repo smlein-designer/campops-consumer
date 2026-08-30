@@ -64,6 +64,57 @@ export const EMPTY_TRIP_INTENT: TripIntent = {
 };
 
 /**
+ * IntentInterpretation — wraps TripIntent with an explicit, model-committed
+ * judgment about whether the request is actionable, needs clarification, or
+ * is outside CampOps' supported scope. This is deliberately a SEPARATE
+ * wrapper, not a confidence field bolted onto TripIntent (captured decision,
+ * 2026-08-30 — see docs/implementation-decisions.md): TripIntent stays a
+ * pure structured representation of the camping goal; `status` is the
+ * model's explicit classification, produced by the same structured-output
+ * call, never inferred afterward by the application counting how many
+ * TripIntent fields happen to be populated.
+ *
+ * - "actionable": enough is understood to search/evaluate responsibly.
+ * - "needs_clarification": a legitimate in-domain camping request, but
+ *   missing information CampOps cannot safely assume without risking a
+ *   materially wrong result. `clarification` carries the question (and,
+ *   where the answer space is naturally a short list, quick replies) —
+ *   never a confidence score or private reasoning.
+ * - "unsupported": the request itself asks for something outside this
+ *   POC's supported scope (not just outside current data). `unsupported`
+ *   carries a plain-language statement of what's out of scope.
+ */
+export const IntentInterpretationSchema = z.object({
+  intent: TripIntentSchema,
+  status: z.enum(["actionable", "needs_clarification", "unsupported"]),
+  clarification: z
+    .object({
+      question: z
+        .string()
+        .describe("The single question to ask the user, plain language."),
+      quickReplies: z
+        .array(z.string())
+        .describe(
+          "Short quick-reply options when the answer space is naturally a small set (e.g. 2-4 options); empty array if not applicable — the composer is always available regardless.",
+        ),
+    })
+    .nullable()
+    .describe('Present only when status is "needs_clarification", else null.'),
+  unsupported: z
+    .object({
+      reason: z
+        .string()
+        .describe(
+          "One or two calm, plain-language sentences stating what's outside CampOps' scope and, if natural, offering to continue with the camping task.",
+        ),
+    })
+    .nullable()
+    .describe('Present only when status is "unsupported", else null.'),
+});
+
+export type IntentInterpretation = z.infer<typeof IntentInterpretationSchema>;
+
+/**
  * CAMPSITE — deterministic inventory record (Build Brief §5 / OOUX CAMPSITE
  * object). Amenities are modeled as a plain metadata tag array, not a
  * standalone object, per Case Study Decision 11 (intentional divergence from

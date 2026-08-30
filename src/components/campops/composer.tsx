@@ -4,6 +4,9 @@ import { CircleStop } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { text } from "@/lib/typography";
 
+/** Stable id so other UI (e.g. the No Match "Change a requirement" action) can focus the composer. */
+export const COMPOSER_INPUT_ID = "campops-composer-input";
+
 /**
  * Persistent input bar (Handoff Spec 2.2 / Figma DS node 2056:6).
  *
@@ -44,6 +47,7 @@ export function Composer({
       }}
     >
       <input
+        id={COMPOSER_INPUT_ID}
         className={`${text.bodyBase} min-w-0 flex-1 bg-transparent text-card-foreground placeholder:text-muted-foreground focus:outline-none`}
         placeholder={placeholder}
         value={value}

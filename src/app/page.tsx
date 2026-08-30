@@ -2,16 +2,18 @@
 
 import { useRef, useState } from "react";
 import { Header } from "@/components/campops/header";
-import { Composer } from "@/components/campops/composer";
+import { Composer, COMPOSER_INPUT_ID } from "@/components/campops/composer";
 import { ChatBubble, ChatRow } from "@/components/campops/chat-bubble";
 import { RequirementChip } from "@/components/campops/requirement-chip";
 import { CandidateCard } from "@/components/campops/candidate-card";
+import { AttentionCard } from "@/components/campops/attention-card";
 import { ReservationReview } from "@/components/campops/reservation-review";
 import { AuthorizeBookingDialog } from "@/components/campops/authorize-booking-dialog";
 import { Button } from "@/components/ui/button";
 import { text } from "@/lib/typography";
 import { evaluateCampsites } from "@/lib/evaluate";
 import { buildRecoveryMessages } from "@/lib/recovery";
+import { summarizeNoMatch, widenSearch } from "@/lib/no-match";
 import {
   computeMissingFields,
   stageReservation,
@@ -20,14 +22,26 @@ import {
 import {
   EMPTY_TRIP_INTENT,
   type EvaluationResult,
+  type IntentInterpretation,
   type Reservation,
   type RequirementTier,
   type TripIntent,
 } from "@/lib/schemas";
 
-type Message = { id: string; sender: "user" | "agent"; text: string };
-type Stage = "active" | "rejected";
-type View = "search" | "reservation";
+type AttentionType = "clarification" | "unsupported" | "no_match";
+
+type ChatEntry =
+  | { id: string; kind: "chat"; sender: "user" | "agent"; text: string }
+  | {
+      id: string;
+      kind: "attention";
+      attentionType: AttentionType;
+      eyebrow: string;
+      body: string;
+      quickReplies?: string[];
+    };
+
+type View = "search" | "reservation" | "closing";
 
 // Simulated commit delay for the "authorizing" state (Handoff Spec §5's
 // Pressed/Loading requirement) — purely cosmetic; the resulting state
@@ -64,8 +78,11 @@ function newId() {
   return crypto.randomUUID();
 }
 
+const CLOSING_MESSAGE =
+  "No worries — nothing was booked or searched further. Feel free to start a new trip anytime.";
+
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [draft, setDraft] = useState("");
   const [intent, setIntent] = useState<TripIntent>(EMPTY_TRIP_INTENT);
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
@@ -73,7 +90,6 @@ export default function Home() {
   // Deterministic app/tool state — sites a scripted availability check has
   // marked unavailable. Never populated from a model response.
   const [unavailableIds, setUnavailableIds] = useState<Set<string>>(new Set());
-  const [stage, setStage] = useState<Stage>("active");
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,19 +103,55 @@ export default function Home() {
 
   const hasStarted = messages.length > 0;
   const activeCandidate = evaluation?.candidates[candidateIndex] ?? null;
+  const showCandidateCard =
+    !!activeCandidate && evaluation?.kind !== "no_match";
   const canRequestAlternative =
     !!evaluation && candidateIndex + 1 < evaluation.candidates.length;
-  const composerLocked = stage !== "active";
 
-  function pushMessage(sender: Message["sender"], msg: string) {
-    setMessages((prev) => [...prev, { id: newId(), sender, text: msg }]);
+  function pushChat(sender: "user" | "agent", msg: string) {
+    setMessages((prev) => [
+      ...prev,
+      { id: newId(), kind: "chat", sender, text: msg },
+    ]);
   }
 
-  async function handleSubmit() {
-    const userMessage = draft.trim();
+  function pushAttention(
+    attentionType: AttentionType,
+    eyebrow: string,
+    body: string,
+    quickReplies?: string[],
+  ) {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: newId(),
+        kind: "attention",
+        attentionType,
+        eyebrow,
+        body,
+        quickReplies,
+      },
+    ]);
+  }
+
+  /** Renders either a normal agent chat summary or a No Match Attention Card, per the evaluation's kind. */
+  function announceEvaluation(result: EvaluationResult) {
+    if (result.kind === "no_match") {
+      pushAttention(
+        "no_match",
+        "No exact match found",
+        summarizeNoMatch(result),
+      );
+    } else {
+      pushChat("agent", agentSummary(result));
+    }
+  }
+
+  async function submitMessage(rawText: string) {
+    const userMessage = rawText.trim();
     if (!userMessage) return;
 
-    pushMessage("user", userMessage);
+    pushChat("user", userMessage);
     setDraft("");
     setIsWorking(true);
     setError(null);
@@ -111,28 +163,88 @@ export default function Home() {
         body: JSON.stringify({ message: userMessage, priorIntent: intent }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Intent extraction failed.");
+      if (!res.ok)
+        throw new Error(data.error ?? "Intent interpretation failed.");
 
-      const updatedIntent: TripIntent = data.intent;
-      setIntent(updatedIntent);
+      const interpretation: IntentInterpretation = data.interpretation;
 
-      // A previously-lost site must not silently re-enter, even after the
-      // user refines their request.
-      const result = evaluateCampsites(updatedIntent, unavailableIds);
+      if (interpretation.status === "unsupported") {
+        // Deterministic guard: an unsupported turn must never touch the
+        // active camping intent, regardless of what the model returned —
+        // enforced here in code, not merely assumed from prompt behavior.
+        pushAttention(
+          "unsupported",
+          "Outside what I can help with",
+          interpretation.unsupported?.reason ??
+            "That's outside what this CampOps POC can do.",
+        );
+        return;
+      }
+
+      setIntent(interpretation.intent);
+
+      if (interpretation.status === "needs_clarification") {
+        pushAttention(
+          "clarification",
+          "Needs your input",
+          interpretation.clarification?.question ??
+            "Could you tell me a bit more about your trip?",
+          interpretation.clarification?.quickReplies,
+        );
+        return;
+      }
+
+      // actionable
+      const result = evaluateCampsites(interpretation.intent, unavailableIds);
       setEvaluation(result);
       setCandidateIndex(0);
-      setStage("active");
-
-      pushMessage("agent", agentSummary(result));
+      announceEvaluation(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      pushMessage(
+      pushChat(
         "agent",
         "Something went wrong while interpreting that — please try again.",
       );
     } finally {
       setIsWorking(false);
     }
+  }
+
+  function handleSubmit() {
+    void submitMessage(draft);
+  }
+
+  function handleQuickReply(reply: string) {
+    void submitMessage(reply);
+  }
+
+  function handleContinueUnsupported() {
+    pushChat("agent", "Continuing with your search.");
+  }
+
+  /** Shared by Candidate Reject, Unsupported "Never mind", and No Match decline. */
+  function handleDecline() {
+    setView("closing");
+  }
+
+  function handleWidenSearch() {
+    if (!evaluation || evaluation.kind !== "no_match") return;
+    const { intent: widenedIntent, widened } = widenSearch(intent, evaluation);
+    if (!widened) return;
+
+    setIntent(widenedIntent);
+    const result = evaluateCampsites(widenedIntent, unavailableIds);
+    setEvaluation(result);
+    setCandidateIndex(0);
+    pushChat(
+      "agent",
+      `I widened the search — "${widened}" is now flexible instead of required.`,
+    );
+    announceEvaluation(result);
+  }
+
+  function handleChangeRequirement() {
+    document.getElementById(COMPOSER_INPUT_ID)?.focus();
   }
 
   /**
@@ -160,8 +272,8 @@ export default function Home() {
     );
     setMessages((prev) => [
       ...prev,
-      { id: newId(), sender: "agent", text: lossMessage },
-      { id: newId(), sender: "agent", text: adaptedMessage },
+      { id: newId(), kind: "chat", sender: "agent", text: lossMessage },
+      { id: newId(), kind: "chat", sender: "agent", text: adaptedMessage },
     ]);
   }
 
@@ -177,11 +289,6 @@ export default function Home() {
       stageReservation(activeCandidate.campsite, intent.guestCount),
     );
     setView("reservation");
-  }
-
-  function handleReject() {
-    setStage("rejected");
-    pushMessage("agent", "No thanks, understood — ending this search for now.");
   }
 
   function handleRequestAlternative() {
@@ -243,10 +350,84 @@ export default function Home() {
     );
   }
 
-  function handleCancelReservation() {
+  /** Full task reset (Closing's "Start a new search") — no prior state leaks into the new trip. */
+  function handleStartNewSearch() {
     clearAuthorizeTimeout();
+    setMessages([]);
+    setDraft("");
+    setIntent(EMPTY_TRIP_INTENT);
+    setEvaluation(null);
+    setCandidateIndex(0);
+    setUnavailableIds(new Set());
+    setIsWorking(false);
+    setError(null);
     setReservation(null);
     setView("search");
+  }
+
+  function renderAttentionActions(
+    entry: Extract<ChatEntry, { kind: "attention" }>,
+  ) {
+    if (entry.attentionType === "clarification") {
+      if (!entry.quickReplies || entry.quickReplies.length === 0) return null;
+      return (
+        <div className="flex flex-wrap items-start gap-3">
+          {entry.quickReplies.map((reply) => (
+            <Button
+              key={reply}
+              variant="outline"
+              onClick={() => handleQuickReply(reply)}
+            >
+              {reply}
+            </Button>
+          ))}
+        </div>
+      );
+    }
+    if (entry.attentionType === "unsupported") {
+      return (
+        <div className="flex items-center gap-3">
+          <Button onClick={handleContinueUnsupported}>
+            Continue with campsite search
+          </Button>
+          <Button variant="outline" onClick={handleDecline}>
+            Never mind
+          </Button>
+        </div>
+      );
+    }
+    // no_match
+    return (
+      <div className="flex items-center gap-3">
+        <Button onClick={handleWidenSearch}>Widen search</Button>
+        <Button variant="outline" onClick={handleChangeRequirement}>
+          Change a requirement
+        </Button>
+        <button
+          type="button"
+          onClick={handleDecline}
+          className={`${text.bodySm} text-water underline`}
+        >
+          No thanks, not right now
+        </button>
+      </div>
+    );
+  }
+
+  if (view === "closing") {
+    return (
+      <div className="flex min-h-screen flex-col bg-background">
+        <Header />
+        <main className="flex flex-1 flex-col items-center gap-6 pt-24">
+          <ChatBubble
+            sender="agent"
+            message={CLOSING_MESSAGE}
+            maxWidthClassName="max-w-[480px]"
+          />
+          <Button onClick={handleStartNewSearch}>Start a new search</Button>
+        </main>
+      </div>
+    );
   }
 
   if (view === "reservation" && reservation) {
@@ -259,7 +440,6 @@ export default function Home() {
             missingFields={computeMissingFields(reservation)}
             onReserveAttempt={handleReserveAttempt}
             onAddPaymentMethod={handleAddPaymentMethod}
-            onCancelReservation={handleCancelReservation}
           />
         </main>
         <AuthorizeBookingDialog
@@ -300,11 +480,22 @@ export default function Home() {
             {/* Chat column */}
             <div className="flex flex-1 flex-col gap-4">
               <div className="flex flex-1 flex-col gap-4">
-                {messages.map((m) => (
-                  <ChatRow key={m.id} sender={m.sender}>
-                    <ChatBubble sender={m.sender} message={m.text} />
-                  </ChatRow>
-                ))}
+                {messages.map((m, i) => {
+                  const isLatest = i === messages.length - 1;
+                  if (m.kind === "chat") {
+                    return (
+                      <ChatRow key={m.id} sender={m.sender}>
+                        <ChatBubble sender={m.sender} message={m.text} />
+                      </ChatRow>
+                    );
+                  }
+                  return (
+                    <div key={m.id} className="flex flex-col items-start gap-3">
+                      <AttentionCard eyebrow={m.eyebrow} body={m.body} />
+                      {isLatest && renderAttentionActions(m)}
+                    </div>
+                  );
+                })}
                 {isWorking && (
                   <ChatRow sender="agent">
                     <ChatBubble sender="agent" message="Working on it…" />
@@ -316,20 +507,17 @@ export default function Home() {
                 onChange={setDraft}
                 onSubmit={handleSubmit}
                 isWorking={isWorking}
-                disabled={composerLocked}
               />
             </div>
 
             {/* Trip panel */}
             <div className="w-[420px] shrink-0 border-l border-border pl-8">
               <p className={`${text.labelLg} mb-4 text-card-foreground`}>
-                {evaluation?.kind === "full"
+                {evaluation?.kind === "full" && showCandidateCard
                   ? "Recommended for you"
-                  : evaluation?.kind === "compromise"
+                  : evaluation?.kind === "compromise" && showCandidateCard
                     ? "Closest match"
-                    : evaluation?.kind === "no_match"
-                      ? "No exact match"
-                      : "Your trip"}
+                    : "Your trip"}
               </p>
 
               {intent.goalStatement && (
@@ -344,41 +532,7 @@ export default function Home() {
                 </p>
               )}
 
-              {evaluation?.kind === "no_match" ? (
-                <div className="flex flex-col gap-4">
-                  <p className={`${text.bodySm} text-muted-foreground`}>
-                    None of the campsites in the current dataset satisfy every
-                    hard requirement you&rsquo;ve given me. Here&rsquo;s how the
-                    closest options fall short:
-                  </p>
-                  <div className="flex flex-col gap-3">
-                    {evaluation.candidates.slice(0, 2).map((c) => (
-                      <div
-                        key={c.campsite.id}
-                        className="rounded-md border border-border bg-card p-4"
-                      >
-                        <p className={`${text.labelSm} text-card-foreground`}>
-                          {c.campsite.siteName} · {c.campsite.campgroundName}
-                        </p>
-                        <ul className="mt-1 list-inside list-disc">
-                          {c.compromises.map((reason) => (
-                            <li
-                              key={reason}
-                              className={`${text.bodySm} text-destructive`}
-                            >
-                              {reason}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                  <p className={`${text.bodySm} text-muted-foreground`}>
-                    Try widening a requirement or telling me what you&rsquo;d be
-                    willing to change.
-                  </p>
-                </div>
-              ) : activeCandidate ? (
+              {showCandidateCard && activeCandidate ? (
                 <>
                   {evaluation?.kind === "compromise" && (
                     <p className={`${text.bodySm} mb-4 text-muted-foreground`}>
@@ -400,37 +554,31 @@ export default function Home() {
                     explanation={activeCandidate.explanation}
                   />
 
-                  {stage === "active" ? (
-                    <div className="mt-4 flex flex-col gap-3">
-                      <div className="flex items-center gap-2">
-                        <Button onClick={handleAccept}>Accept</Button>
-                        <Button
-                          variant="outline"
-                          onClick={handleRequestAlternative}
-                          disabled={!canRequestAlternative}
-                        >
-                          Request Alternative
-                        </Button>
-                        <Button variant="link" onClick={handleReject}>
-                          No thanks, I&rsquo;ll pass
-                        </Button>
-                      </div>
-                      {/* Scripted demo control (Build Brief §13) — not a designed
-                          screen element, a deterministic exception trigger for
-                          verifying availability-loss recovery. */}
-                      <button
-                        type="button"
-                        onClick={handleSimulateAvailabilityLoss}
-                        className={`${text.caption} self-start text-muted-foreground underline`}
+                  <div className="mt-4 flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <Button onClick={handleAccept}>Accept</Button>
+                      <Button
+                        variant="outline"
+                        onClick={handleRequestAlternative}
+                        disabled={!canRequestAlternative}
                       >
-                        Simulate: this site just became unavailable
-                      </button>
+                        Request Alternative
+                      </Button>
+                      <Button variant="link" onClick={handleDecline}>
+                        No thanks, I&rsquo;ll pass
+                      </Button>
                     </div>
-                  ) : (
-                    <p className={`${text.bodySm} mt-4 text-muted-foreground`}>
-                      Search ended.
-                    </p>
-                  )}
+                    {/* Scripted demo control (Build Brief §13) — not a designed
+                        screen element, a deterministic exception trigger for
+                        verifying availability-loss recovery. */}
+                    <button
+                      type="button"
+                      onClick={handleSimulateAvailabilityLoss}
+                      className={`${text.caption} self-start text-muted-foreground underline`}
+                    >
+                      Simulate: this site just became unavailable
+                    </button>
+                  </div>
                 </>
               ) : (
                 <div className="flex flex-col gap-6">
