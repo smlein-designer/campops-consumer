@@ -6,8 +6,10 @@ import { Composer } from "@/components/campops/composer";
 import { ChatBubble, ChatRow } from "@/components/campops/chat-bubble";
 import { RequirementChip } from "@/components/campops/requirement-chip";
 import { CandidateCard } from "@/components/campops/candidate-card";
+import { Button } from "@/components/ui/button";
 import { text } from "@/lib/typography";
 import { evaluateCampsites } from "@/lib/evaluate";
+import { buildRecoveryMessages } from "@/lib/recovery";
 import {
   EMPTY_TRIP_INTENT,
   type EvaluationResult,
@@ -16,6 +18,7 @@ import {
 } from "@/lib/schemas";
 
 type Message = { id: string; sender: "user" | "agent"; text: string };
+type Stage = "active" | "accepted" | "rejected";
 
 const TIER_SECTIONS: {
   key: keyof TripIntent;
@@ -43,25 +46,38 @@ function agentSummary(evaluation: EvaluationResult): string {
   return "Nothing in the current dataset satisfies every requirement you've given me. You can widen a requirement or ask me to try something different.";
 }
 
+function newId() {
+  return crypto.randomUUID();
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [intent, setIntent] = useState<TripIntent>(EMPTY_TRIP_INTENT);
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  // Deterministic app/tool state — sites a scripted availability check has
+  // marked unavailable. Never populated from a model response.
+  const [unavailableIds, setUnavailableIds] = useState<Set<string>>(new Set());
+  const [stage, setStage] = useState<Stage>("active");
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const hasStarted = messages.length > 0;
-  const topCandidate = evaluation?.candidates[0] ?? null;
+  const activeCandidate = evaluation?.candidates[candidateIndex] ?? null;
+  const canRequestAlternative =
+    !!evaluation && candidateIndex + 1 < evaluation.candidates.length;
+  const composerLocked = stage !== "active";
+
+  function pushMessage(sender: Message["sender"], msg: string) {
+    setMessages((prev) => [...prev, { id: newId(), sender, text: msg }]);
+  }
 
   async function handleSubmit() {
     const userMessage = draft.trim();
     if (!userMessage) return;
 
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), sender: "user", text: userMessage },
-    ]);
+    pushMessage("user", userMessage);
     setDraft("");
     setIsWorking(true);
     setError(null);
@@ -78,30 +94,72 @@ export default function Home() {
       const updatedIntent: TripIntent = data.intent;
       setIntent(updatedIntent);
 
-      const result = evaluateCampsites(updatedIntent);
+      // A previously-lost site must not silently re-enter, even after the
+      // user refines their request.
+      const result = evaluateCampsites(updatedIntent, unavailableIds);
       setEvaluation(result);
+      setCandidateIndex(0);
+      setStage("active");
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          sender: "agent",
-          text: agentSummary(result),
-        },
-      ]);
+      pushMessage("agent", agentSummary(result));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          sender: "agent",
-          text: "Something went wrong while interpreting that — please try again.",
-        },
-      ]);
+      pushMessage(
+        "agent",
+        "Something went wrong while interpreting that — please try again.",
+      );
     } finally {
       setIsWorking(false);
     }
+  }
+
+  /**
+   * Scripted, deterministic availability-loss trigger (Build Brief §13's
+   * "developer/demo control" option) — never derived from the model. Marks
+   * the currently active candidate unavailable, re-evaluates the remaining
+   * set against the SAME (unmutated) TripIntent, and presents the loss and
+   * the adapted pick together as two agent messages in one interaction.
+   */
+  function handleSimulateAvailabilityLoss() {
+    if (!activeCandidate) return;
+    const lost = activeCandidate;
+
+    const nextUnavailable = new Set(unavailableIds);
+    nextUnavailable.add(lost.campsite.id);
+    setUnavailableIds(nextUnavailable);
+
+    const adapted = evaluateCampsites(intent, nextUnavailable);
+    setEvaluation(adapted);
+    setCandidateIndex(0);
+
+    const { lossMessage, adaptedMessage } = buildRecoveryMessages(
+      lost,
+      adapted,
+    );
+    setMessages((prev) => [
+      ...prev,
+      { id: newId(), sender: "agent", text: lossMessage },
+      { id: newId(), sender: "agent", text: adaptedMessage },
+    ]);
+  }
+
+  function handleAccept() {
+    if (!activeCandidate) return;
+    setStage("accepted");
+    pushMessage(
+      "agent",
+      `Great — I'll get ${activeCandidate.campsite.siteName} at ${activeCandidate.campsite.campgroundName} ready for you. (Staging and booking come in a later slice.)`,
+    );
+  }
+
+  function handleReject() {
+    setStage("rejected");
+    pushMessage("agent", "No thanks, understood — ending this search for now.");
+  }
+
+  function handleRequestAlternative() {
+    if (!canRequestAlternative) return;
+    setCandidateIndex((i) => i + 1);
   }
 
   return (
@@ -149,6 +207,7 @@ export default function Home() {
                 onChange={setDraft}
                 onSubmit={handleSubmit}
                 isWorking={isWorking}
+                disabled={composerLocked}
               />
             </div>
 
@@ -210,7 +269,7 @@ export default function Home() {
                     willing to change.
                   </p>
                 </div>
-              ) : topCandidate ? (
+              ) : activeCandidate ? (
                 <>
                   {evaluation?.kind === "compromise" && (
                     <p className={`${text.bodySm} mb-4 text-muted-foreground`}>
@@ -219,18 +278,52 @@ export default function Home() {
                     </p>
                   )}
                   <CandidateCard
-                    location={topCandidate.campsite.campgroundName}
-                    siteName={topCandidate.campsite.siteName}
-                    siteType={topCandidate.campsite.siteType}
-                    capacityValue={`${topCandidate.campsite.capacity} guests`}
-                    distanceValue={`${topCandidate.campsite.distanceMiles} mi`}
-                    datesValue={topCandidate.campsite.datesAvailable}
-                    priceValue={`$${topCandidate.campsite.pricePerNight}/night`}
-                    amenities={topCandidate.campsite.amenities}
-                    preserved={topCandidate.preserved}
-                    compromises={topCandidate.compromises}
-                    explanation={topCandidate.explanation}
+                    location={activeCandidate.campsite.campgroundName}
+                    siteName={activeCandidate.campsite.siteName}
+                    siteType={activeCandidate.campsite.siteType}
+                    capacityValue={`${activeCandidate.campsite.capacity} guests`}
+                    distanceValue={`${activeCandidate.campsite.distanceMiles} mi`}
+                    datesValue={activeCandidate.campsite.datesAvailable}
+                    priceValue={`$${activeCandidate.campsite.pricePerNight}/night`}
+                    amenities={activeCandidate.campsite.amenities}
+                    preserved={activeCandidate.preserved}
+                    compromises={activeCandidate.compromises}
+                    explanation={activeCandidate.explanation}
                   />
+
+                  {stage === "active" ? (
+                    <div className="mt-4 flex flex-col gap-3">
+                      <div className="flex items-center gap-2">
+                        <Button onClick={handleAccept}>Accept</Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleRequestAlternative}
+                          disabled={!canRequestAlternative}
+                        >
+                          Request Alternative
+                        </Button>
+                        <Button variant="link" onClick={handleReject}>
+                          No thanks, I&rsquo;ll pass
+                        </Button>
+                      </div>
+                      {/* Scripted demo control (Build Brief §13) — not a designed
+                          screen element, a deterministic exception trigger for
+                          verifying availability-loss recovery. */}
+                      <button
+                        type="button"
+                        onClick={handleSimulateAvailabilityLoss}
+                        className={`${text.caption} self-start text-muted-foreground underline`}
+                      >
+                        Simulate: this site just became unavailable
+                      </button>
+                    </div>
+                  ) : (
+                    <p className={`${text.bodySm} mt-4 text-muted-foreground`}>
+                      {stage === "accepted"
+                        ? "Selected — staged for a later slice."
+                        : "Search ended."}
+                    </p>
+                  )}
                 </>
               ) : (
                 <div className="flex flex-col gap-6">

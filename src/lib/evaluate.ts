@@ -123,9 +123,20 @@ const RANK_ORDER: Record<MatchType, number> = {
  * available sites only have unverifiable hard requirements) or "no_match"
  * (if every site has at least one confirmed-unsatisfied hard requirement) —
  * it never silently substitutes a lesser match for a full one.
+ *
+ * `excludeIds` removes specific sites from consideration entirely (e.g. a
+ * site a deterministic availability check has just marked unavailable) —
+ * they are filtered out before any scoring or classification happens, so an
+ * excluded site can never re-enter the candidate set, not even as a
+ * lower-ranked alternative.
  */
-export function evaluateCampsites(intent: TripIntent): EvaluationResult {
-  const evaluated = CAMPSITES.filter((site) => site.available).map((site) => {
+export function evaluateCampsites(
+  intent: TripIntent,
+  excludeIds: ReadonlySet<string> = new Set(),
+): EvaluationResult {
+  const evaluated = CAMPSITES.filter(
+    (site) => site.available && !excludeIds.has(site.id),
+  ).map((site) => {
     // guestCount is a structured field, not free text — it must be enforced
     // as a hard capacity check on its own, independent of whether the model
     // also happened to echo it into hardRequirements as text. (Found via

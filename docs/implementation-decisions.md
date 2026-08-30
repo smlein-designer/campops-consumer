@@ -69,3 +69,57 @@ treated as satisfied," since it doesn't even surface as a visible compromise. Wo
 for any other structured `TripIntent` field that could similarly go unenforced (e.g. `checkIn`/
 `checkOut` dates aren't currently checked against `datesAvailable` at all — flagging, not fixing,
 since date-range matching wasn't in scope for this slice).
+
+---
+
+**Decision: Availability-loss explanations stay deterministic, no new GPT call for this slice**
+Date: 2026-08-30
+Context: The availability-loss recovery slice's requirements explicitly permit GPT-5.4 mini to
+phrase deterministic comparison facts for the "what was preserved, what changed" explanation, with
+a hard constraint that it may never invent availability, pricing, amenities, or tradeoffs.
+Options considered: add a new API route that asks the model to phrase the preserved/changed diff
+from structured facts; keep the diff entirely template-based, as the existing recommendation
+explanation already is.
+Choice: Kept fully deterministic (`src/lib/recovery.ts`'s `describeChange`) — no new model call was
+added for this slice.
+Why: The permission was worded as a constraint on how GPT *may* be used if used, not a requirement
+that it must be. A template built directly from the same Candidate facts already driving the rest of
+the UI is simpler, has no new latency/failure surface, and is trivially testable without a live key
+(see scripts/smoke-test-recovery.ts) — consistent with the Build Brief's "deterministic where
+reliability matters" principle. Revisit if the deterministic phrasing proves too mechanical for real
+user testing.
+Impact on product/build: No new API route. `buildRecoveryMessages`/`describeChange` in
+`src/lib/recovery.ts` produce both agent messages entirely from facts already on the two Candidate
+records being compared.
+
+---
+
+**Decision: Scripted availability-loss trigger is a visible demo control, not hidden**
+Date: 2026-08-30
+Context: Build Brief §13 lists "developer/demo control that triggers the exception" as one acceptable
+mechanism for the scripted availability-loss exception. The trigger needs to be something a person
+(or an automated UI test) can actually invoke in the running app, deterministically and repeatably.
+Choice: A plainly-labeled text link under the candidate's action row — "Simulate: this site just
+became unavailable" — visible whenever an active candidate exists. Not styled as a DS component,
+not hidden behind a dev flag.
+Why: It needs to be real and clickable to verify the full interaction end-to-end (including in the
+browser, not just via `evaluateCampsites` directly), and mislabeling it as organic product behavior
+would misrepresent a scripted exception as real backend integration. Explicit and honest labeling
+was judged better than a fake "real" trigger for a POC.
+What would change this decision: Once the POC needs true random/backend-driven availability changes,
+or once a design actually specifies this control, replace it with that.
+
+---
+
+**Finding: Composer conflated "actively processing" with "not accepting input"**
+Date: 2026-08-30
+Context: Visual verification of the Accept/Reject flow showed the Composer rendering its Stop
+control (not a disabled Send button) once a search was accepted or rejected — implying work was
+in progress and interruptible when nothing was actually running.
+Resolution: `Composer` now takes `isWorking` and `disabled` as distinct props — `isWorking` alone
+controls the Send/Stop swap; `disabled` (used for the accepted/rejected locked state) always renders
+a plain disabled Send button, never Stop.
+Impact on process: A reminder that reusing one loading-ish boolean for two different meanings
+("processing" vs. "locked for another reason") is an easy way to send the wrong signal about agent
+activity — exactly the kind of legibility problem the Design Brief's "Invisible Agency" risk warns
+about, just inverted (implying activity that isn't happening, rather than hiding activity that is).
