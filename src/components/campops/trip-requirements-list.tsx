@@ -1,4 +1,5 @@
 import { RequirementChip } from "@/components/campops/requirement-chip";
+import { getDerivedRequirements } from "@/lib/requirements";
 import { text } from "@/lib/typography";
 import type { RequirementTier, TripIntent } from "@/lib/schemas";
 
@@ -25,6 +26,18 @@ export const TIER_SECTIONS: {
  * than each maintaining its own copy of the tier loop and remove wiring
  * (design resolution, 2026-09-01 — see docs/implementation-decisions.md:
  * "do not create separate chip-removal logic per screen").
+ *
+ * Trip Requirement Projection (2026-09-10 — see
+ * docs/implementation-decisions.md): each tier section now also renders
+ * `getDerivedRequirements`' structural entries (currently capacity and pet
+ * count/eligibility) alongside the tier's literal array values — those two
+ * facts are real evaluator-enforced hard constraints that never lived in
+ * `hardRequirements` text to begin with (see that function's own doc
+ * comment for why), so the panel previously showed only a subset of what
+ * was actually active. Derived chips render with no `onRemove` — the same
+ * "no removal path, not removable" treatment `RequirementChip` already
+ * supports for the Candidate Card's synthetic checks — while literal
+ * values keep their existing fully-removable behavior unchanged.
  */
 export function TripRequirementsList({
   intent,
@@ -33,17 +46,23 @@ export function TripRequirementsList({
   intent: TripIntent;
   onRemove: (key: keyof TripIntent, value: string) => void;
 }) {
+  const derived = getDerivedRequirements(intent);
   return (
     <div className="flex flex-col gap-6">
       {TIER_SECTIONS.map(({ key, label, tier }) => {
         const values = intent[key];
-        if (!Array.isArray(values) || values.length === 0) return null;
+        const derivedForTier = derived.filter((d) => d.tier === tier);
+        if (!Array.isArray(values)) return null;
+        if (values.length === 0 && derivedForTier.length === 0) return null;
         return (
           <div key={key} className="flex flex-col gap-2">
             <span className={`${text.labelOverline} text-muted-foreground`}>
               {label}
             </span>
             <div className="flex flex-wrap gap-1">
+              {derivedForTier.map((d) => (
+                <RequirementChip key={d.label} label={d.label} tier={d.tier} />
+              ))}
               {values.map((v) => (
                 <RequirementChip
                   key={v}

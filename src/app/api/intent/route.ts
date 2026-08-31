@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
+import { checkRateLimit, resolveClientKey } from "@/lib/rate-limit";
 import {
   EMPTY_TRIP_INTENT,
   IntentInterpretationSchema,
@@ -59,6 +60,18 @@ Extracting TripIntent:
 - petCount: only when travelingWithPets is true. "my dog"/"a dog" (singular) -> 1. "two dogs" -> 2. A
   genuinely unspecified plural ("we have dogs", no count stated) -> null — never guess a count. Always null
   when travelingWithPets is false.
+- travelingWithChildren: true ONLY when the user explicitly identifies children as part of THIS camping
+  party — this is about explicit CHILD COMPOSITION, not raw headcount. Compare "4 adults and 2 kids" to "6
+  people": both give guestCount 6, but only the first tells you children are actually part of the group.
+  Set this true for: "2 adults and 2 kids", "my wife and I with our two children", "4 adults, two kids",
+  "camping with the kids", "me, my partner, and our 8-year-old" — any explicit mention of a child, kids,
+  son/daughter, or a child's age as part of the party. Leave it false for generic party-size language with
+  no child called out: "6 people", "a group of 6", "six adults" must all leave this false even though
+  guestCount is filled in — do not infer children from headcount alone, and do not infer this from anything
+  other than the party composition itself (a destination or amenity being kid-oriented doesn't count).
+- childCount: only when travelingWithChildren is true, mirroring petCount's own rule exactly. "our
+  kid"/"my son" (singular) -> 1. "two kids" -> 2. A genuinely unspecified plural ("camping with the kids",
+  no count stated) -> null — never guess a count. Always null when travelingWithChildren is false.
 - budget: only when the user states an actual price limit. Distinguish a TOTAL-stay limit ("keep the whole
   stay under $300", "total budget of $250") -> maxTotal, from a PER-NIGHT limit ("no more than $150 a
   night", "nightly rate under $100") -> maxPerNight. Fill in only the one the user's phrasing actually
@@ -132,6 +145,28 @@ was already established — you are only classifying the question, never fabrica
 yourself; the application looks that up from real campsite data.`;
 
 export async function POST(req: Request) {
+  // Public Demo Rate Limiting (2026-09-08 — see docs/implementation-decisions.md):
+  // this is the ONE expensive route (calls OpenAI) on an otherwise
+  // unauthenticated public POC — checked before any parsing or the OpenAI
+  // call itself, so an over-limit request never reaches either. Fails
+  // open (never blocks the demo) if Upstash isn't configured or is
+  // unreachable — see src/lib/rate-limit.ts for that distinction.
+  const clientKey = resolveClientKey(req.headers);
+  const rateLimitResult = await checkRateLimit(clientKey);
+  if (!rateLimitResult.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a moment and try again." },
+      {
+        status: 429,
+        headers: {
+          "X-RateLimit-Limit": String(rateLimitResult.limit),
+          "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+          "X-RateLimit-Reset": String(rateLimitResult.reset),
+        },
+      },
+    );
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(

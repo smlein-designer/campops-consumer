@@ -94,6 +94,18 @@ export const ENFORCED_CAMPSITE_FIELDS = [
  * value on some future record reads as unverifiable rather than a false
  * failure.
  */
+/**
+ * The one place the capacity synthetic-check label is built (Trip
+ * Requirement Projection correction, 2026-09-10 — see
+ * docs/implementation-decisions.md) — exported so the Trip Requirements
+ * panel projection (`src/lib/requirements.ts`) renders the EXACT same
+ * label the evaluator/No-Match copy already uses, rather than a
+ * hand-typed duplicate that could quietly drift out of sync.
+ */
+export function capacityRequirementLabel(guestCount: number): string {
+  return `Capacity for ${guestCount}`;
+}
+
 export function petStatus(
   site: Campsite,
   requiredCount: number,
@@ -128,7 +140,10 @@ function checkConstraint(
   // Dataset Depth correction (2026-09-04): family suitability is grounded in
   // actual features, not an opaque flag — "family-friendly" is satisfied
   // only when the site genuinely has at least one real family feature.
-  if (l.includes("famil"))
+  // Recognizes "kid(s)"/"child(ren)" phrasing too (Party-Composition
+  // Inference correction, 2026-09-10) — "kid-friendly is a must" and
+  // "family-friendly is important" name the same underlying concept.
+  if (l.includes("famil") || l.includes("kid") || l.includes("child"))
     return { label, tier, status: status(site.familyFeatures.length > 0) };
 
   // Water access is now structured and genuinely distinguishes "waterfront"
@@ -381,7 +396,7 @@ export function evaluateCampsites(
       intent.guestCount !== null
         ? [
             {
-              label: `Capacity for ${intent.guestCount}`,
+              label: capacityRequirementLabel(intent.guestCount),
               tier: "hard",
               status:
                 site.capacity >= intent.guestCount

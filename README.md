@@ -34,3 +34,14 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+### Environment variables
+
+See `.env.local.example` for the full list. In Vercel → Project → Settings → Environment
+Variables, set for **Production** and **Preview** (Development can keep using `.env.local`):
+
+- `OPENAI_API_KEY` — required; `/api/intent` returns a 500 without it.
+- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` — optional. Enables public-demo rate
+  limiting (10 requests/minute/IP) on `/api/intent` — see
+  `docs/implementation-decisions.md`. If either is unset, rate limiting is silently disabled
+  (this is the expected local-development state).

@@ -822,6 +822,17 @@ and no enforcement (see the "known deferred" note in `docs/final-evaluation.md`)
 removable chip would be a real product-behavior change (what does "removing" a guest count or a date
 even mean — clearing it entirely? reverting to null and re-opening Missing Info?), not a visual
 fidelity fix, so it was flagged here rather than implemented.
+
+**Amended 2026-09-10** (Trip Requirement Projection + Party-Composition Inference, below): "no chip
+representation" for `guestCount` was true at the time this was written but became a real, live bug —
+a live report showed a No Match Attention Card correctly citing "Capacity for 6" while the Trip
+Requirements panel showed nothing about capacity at all, because there was still no chip for it
+anywhere in this file's list. That gap is now closed, in exactly the way this entry already anticipated
+it should be if it ever were closed: `guestCount` (and `travelingWithPets`/`petCount`, the same
+situation) now project as **non-removable** hard chips — real visibility into structured state, without
+reopening the "what does removing a guest count even mean" question this entry correctly flagged as out
+of scope for a chip-removal affordance. `checkIn`/`checkOut` remain deliberately un-projected, unchanged
+— see the 2026-09-10 entry's item 8 for why dates specifically stay out of the chip section.
 Verification for this phase overall: all 8 PRD evaluation scenarios exercised live (desktop, with
 mobile spot-checks on the direct-manipulation ones); full existing regression/smoke suite (all 9
 scripts) unaffected; `tsc --noEmit`, `eslint .`, `next build` all clean; zero console errors across
@@ -1910,3 +1921,319 @@ own still-functioning semantic judgment — both are correct outcomes), the bran
 "Which park or region?", "Hill Country" correctly completing the chain, the final result reflecting
 BOTH quiet and family-friendly (one as preserved, the other as an acknowledged miss in the one run where
 the winning site didn't satisfy both), never requesting dates, zero console errors in any run.
+
+---
+
+**Slice: Public Demo Rate Limiting**
+Date: 2026-09-08
+Context: CampOps is a public, unauthenticated design POC on Vercel Hobby. `/api/intent` is the one
+expensive route (calls OpenAI GPT-5.4-mini) — with no auth and no accounts, nothing previously stopped
+one IP or bot from hammering it and burning API credits. This slice adds the minimum needed to close
+that gap, deliberately not a generic rate-limiting framework, not auth, not per-user quotas.
+
+**Architecture:** new `src/lib/rate-limit.ts` — small, server-only, three responsibilities per the
+brief: build the Upstash `Ratelimit` instance once at module load (10 requests/minute/IP, sliding
+window), derive a stable per-client key from the request (`resolveClientKey`), and run the check
+(`checkRateLimit`). Wired into `src/app/api/intent/route.ts` as the FIRST thing the route does —
+before body parsing, before the `OPENAI_API_KEY` check, before the OpenAI client is ever constructed —
+so an over-limit request never reaches any of that.
+- **Identity**: `resolveClientKey` reads the first address in `x-forwarded-for` (the standard
+  Vercel/proxy convention for the original client; later entries are intermediate hops), falling back
+  to a shared `"unknown"` bucket — never a crash — when the header is absent. Deliberately reads only
+  `Headers`, never anything from the request body, per the standing rule that identity must never
+  depend on trusting model/user-supplied input.
+- **Local development**: if either `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` is unset, the
+  module logs one clear warning (guarded so it never repeats) and `checkRateLimit` always reports
+  `allowed: true` — no fake/dummy Redis credentials, no crash, the POC stays trivially runnable with
+  just `OPENAI_API_KEY` set, exactly as before this slice.
+- **Fail-open on infrastructure failure, fail-closed on genuine abuse** — the one deliberate asymmetry
+  the brief called for: if Upstash is configured but throws (a transient outage), `checkRateLimit`
+  logs the error server-side and reports `allowed: true` — a demo POC must never go fully dark because
+  a dependency blipped. A real over-limit result (Upstash reachable, limit genuinely exceeded) is the
+  ONLY case that returns `allowed: false`, and the route honors that with a real 429.
+- **Response shape**: a denied request gets `HTTP 429` with the exact compact body
+  `{"error": "Too many requests. Please wait a moment and try again."}` plus `X-RateLimit-*` headers
+  from Upstash's own result — no internal details, no stack traces, nothing that could leak
+  `UPSTASH_REDIS_REST_TOKEN` or any other secret.
+- **Client (`page.tsx`)**: `submitMessage` now checks `res.status === 429` before the existing generic
+  `!res.ok` throw, pushing one concise agent chat message ("You've sent a lot of requests in a short
+  time. Try again in a moment.") and returning — no reset of `messages`/`intent`/`evaluation`, no new
+  full-screen error state, the exact same non-disruptive early-return pattern already used for every
+  other "this turn didn't produce a new recommendation" case in this file.
+
+**Testability without over-engineering:** `checkRateLimit` takes an optional `limiterOverride`
+parameter — the minimal dependency-injection seam needed to unit-test "under limit," "over limit," and
+"Upstash throws" with a fake `{limit: async () => ...}` object, without a mocking library and without
+real Upstash credentials. Production call sites never pass it; the real module-level singleton (or
+`null`, if unconfigured) is used exactly as before.
+
+**What is and is not integration-tested (recorded explicitly, per the standing instruction):**
+`resolveClientKey` is tested against real `Headers` objects — full real coverage. The "not configured"
+path is tested against the REAL module singleton in this environment, where Upstash env vars are
+genuinely unset — real integration coverage of that specific path. The "under limit"/"over
+limit"/"Upstash throws" paths are tested via the dependency-injection seam — this proves
+`checkRateLimit`'s OWN interpretation logic is correct, but does NOT prove Upstash's actual
+sliding-window algorithm, network behavior, or real credentials work correctly against a live Redis
+instance. **That has not been verified and cannot be claimed verified from this environment** — this
+sandbox has no real Upstash project or Vercel deployment. It must be verified manually against the
+deployed Vercel URL once real `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` values are configured
+there (e.g. by sending 11+ requests within a minute from one client and confirming the 11th returns
+429), which is explicitly called out to the user as a follow-up rather than silently assumed.
+
+Verified in this environment: new `scripts/smoke-test-rate-limit.ts` (22 assertions: key resolution,
+the real not-configured path, the injected under/over-limit/outage paths, response-shape hygiene, and
+static source guards proving the route's before-OpenAI ordering, the 429 response shape, and the
+client's non-disruptive 429 handling); all pre-existing regression scripts re-verified passing; a live
+browser smoke test confirmed the app functions completely normally end-to-end with no Upstash
+configuration present (the expected local-development state); `tsc --noEmit`, `eslint`, and
+`next build` all clean, including the expected "rate limiting is disabled" warning appearing exactly
+once per build worker process (not per request) during `next build`'s static generation.
+
+---
+
+**Slice: Persistent Composer Focus**
+Date: 2026-09-09
+Context: the composer is the primary conversational interaction surface, but focus was silently
+dropped on every submission — after Send or Enter, the user had to click back into the input before
+they could type their next turn. This slice restores continuity without turning the composer into an
+unconditional global focus magnet.
+
+**Root cause**: the composer's `<input>` is `disabled={isWorking || disabled}` (unchanged in this
+slice, per its own explicit constraint — see below). A genuinely `disabled` HTML element cannot hold
+focus at all, so the moment a submission flips `isWorking` to `true`, focus is unconditionally lost —
+not "not restored," actually destroyed. That single fact drove the whole design: restoration can only
+ever happen after `isWorking` flips back to `false` and the input becomes focusable again, never at
+the moment of submission itself.
+
+**Design — "pending focus, cancelable by any real interaction"** (`src/app/page.tsx`,
+`src/components/campops/composer.tsx`):
+- `Composer` is now `forwardRef<HTMLInputElement, …>`, forwarding to the real `<input>` DOM node. The
+  same ref object (`composerInputRef`) is passed to both places `Composer` is rendered (the landing
+  screen and the active-conversation view — mutually exclusive), so React reattaches it automatically
+  across that unmount/mount transition. This is the "actual input ref, not `document.querySelector`"
+  requirement — there is exactly one `useRef<HTMLInputElement>` in the whole feature, and it is a real
+  typed DOM ref, never a global DOM query.
+- `handleSubmit` (the single function both Send-click and Enter route through, since both submit the
+  same `<form>`) sets `pendingComposerFocusRef.current = true` before calling `submitMessage`.
+  `handleQuickReply` deliberately does not — a quick-reply click is the user explicitly choosing a
+  different control, and per the standing "no focus tug-of-war" rule, must never have focus dragged
+  back to the composer afterward.
+- A `useEffect` keyed on `[isWorking]` consumes the pending flag (one-shot) the instant `isWorking`
+  becomes `false`: it bails out while still working or with nothing pending, otherwise resets the flag
+  and calls `composerInputRef.current?.focus()`. This is deliberately the smallest reliable signal
+  available — React guarantees the effect runs after the DOM has already committed the now-enabled
+  input, so there is no timing gap to paper over with a timeout. No `setTimeout`, no polling, no
+  arbitrary delay anywhere in this feature.
+- A capture-phase `pointerdown`/`keydown` listener on `document` cancels the pending flag the instant
+  the event target is anything other than the composer input — this is what makes an explicit user
+  focus change always win over the automatic restore, and it is registered in the capture phase
+  specifically so it always observes the interaction before a dialog's own focus trap can intercept
+  and stop it.
+
+**Bug found via live verification, fixed in the same slice**: the very first live Playwright run
+(typing the next message immediately after Enter, with zero click, exactly per this slice's required
+verification sequence) showed the restore effect not firing at all. Root cause: while the composer is
+disabled, a keystroke the user fires off has nowhere to go — the disabled input can't be an event
+target — so the browser routes it to `document.body` by fallback. That keydown's target is body, which
+is not the composer input, so the capture-phase cancel-listener was (wrongly) treating it as an
+explicit focus change to a different real control and canceling the pending restore before it ever got
+a chance to run. Fixed by excluding `document.body` from the cancellation check — it is the browser's
+fallback for "nothing else is focused," not a control the user deliberately interacted with. Only a
+genuine other element (a button, a chip, a dialog) still cancels the pending restore.
+
+**What this feature does and does NOT guarantee** (documented explicitly, not left implicit): keeping
+`disabled={isWorking || disabled}` unchanged (this slice's own scope boundary) means keystrokes typed
+during the brief window while a response is still in flight are physically dropped — a disabled
+`<input>` cannot receive them, full stop. This is pre-existing, unchanged behavior, not a regression
+introduced or silently accepted here. What this feature does guarantee, and what live verification
+confirmed: the moment the composer re-enables, focus is already there waiting, and the user can keep
+typing with zero click — the actual complaint being fixed.
+
+**Availability-loss recovery, Simulate, Accept/Reject, Widen search — all explicit button clicks**:
+these do not route through `handleSubmit` and never set the pending flag. Per the standing "no focus
+tug-of-war" rule, focus is left wherever the click landed — the same treatment as any other explicit
+control interaction, not a special case. (An earlier live-verification pass assumed the availability-
+loss Attention Card should always pull focus back to the composer; that assumption was wrong and was
+corrected once the actual click-driven mechanics were traced through — the Simulate button is a button
+click like any other, not a composer submission.)
+
+**Modal/dialog interaction — verified by inspection, not just by not-breaking**: `ReservationReview`
+and `AuthorizeBookingDialog` are rendered only in the `view === "reservation"` branch, which never
+mounts a `<Composer>` at all — so there is structurally nothing for this feature to fight there. Live
+verification confirmed the Authorize Booking dialog still opens with `role="dialog"`, traps focus
+inside itself (confirmed on the actual "Cancel" button), and closes cleanly with zero console errors —
+entirely via Base UI's own existing, untouched behavior. The Trip Details bottom sheet (mobile-only,
+`src/components/campops/trip-details-sheet.tsx`) is the one surface that does share the conversational
+view with the composer — live mobile verification confirmed it opens with focus moving inside it and
+closes via Escape, with the composer never contesting that focus.
+
+**Mobile keyboard dismissal**: verified live at 390×844 — after a deliberate blur (simulating the user
+dismissing the keyboard or tapping elsewhere), the composer does not reclaim focus on its own. The
+pending-focus mechanism only ever fires in response to a genuine prior submission, never speculatively,
+so there is no reopen loop. One platform limitation is recorded rather than worked around: iOS Safari
+specifically only opens the on-screen keyboard from a `.focus()` call made synchronously inside a real
+user gesture — a `.focus()` fired from a `useEffect` after an async response resolves falls outside
+that window, so on iOS the input may become the logically focused element without the keyboard
+visually reappearing. This is a known OS/browser security restriction, not a bug in this
+implementation, and there is no reliable non-hacky way around it (a synthetic touch dispatch would be
+exactly the kind of brittle workaround the standing rules forbid) — so it is documented here rather
+than "fixed."
+
+**Principle** (the one this whole slice reduces to): the composer remains the default conversational
+focus target after submission, but explicit user focus changes and modal focus management always take
+precedence.
+
+**Verified in this environment**: new `scripts/smoke-test-composer-focus.ts` (17 static source-guard
+assertions covering the ref wiring, the `isWorking`-keyed one-shot restore effect, the
+`handleSubmit`/`handleQuickReply` asymmetry, the capture-phase cancel-listener and its cleanup, and
+that the shared Dialog primitive remains completely unaware of this feature) — explicit in its own
+header comment that it proves the wiring, not real browser focus behavior, since this project has no
+jsdom/React Testing Library configured. All pre-existing regression scripts re-verified passing;
+`tsc --noEmit`, `eslint`, and `next build` all clean. Live Playwright verification (ad hoc scratch
+scripts, not committed) at both 1440×900 and 390×844: composer regains focus with no click after a
+normal recommendation, a clarification question, a No Match response, and a candidate refinement;
+typing immediately after Enter with zero click lands once the composer re-enables; clicking a
+Candidate Card action (Accept) does not have the composer steal focus back; the No Match Attention
+Card's "Change a requirement" button focuses the composer directly; the Authorize Booking dialog and
+the mobile Trip Details sheet both retain their own correct focus-trap/return behavior; a simulated
+mobile keyboard dismissal is not immediately overridden. Zero console errors across every run. True
+native mobile keyboard show/hide behavior (as opposed to logical DOM focus, which was verified) still
+requires manual verification on a real device — Playwright's Chromium-based mobile emulation cannot
+exercise the OS-level keyboard itself.
+
+---
+
+**Slice: Trip Requirement Projection + Party-Composition Inference**
+Date: 2026-09-10
+Context: a live bug report for "a campsite for 4 adults, two kids, and two dogs within an hour from my
+home" — CampOps correctly asked for ZIP and dates, and the eventual No Match copy correctly cited
+"Pet-friendly", "Capacity for 6", and "within an hour from home". The Trip Requirements panel showed
+only the last of those. It also never surfaced that two explicit children were part of the party.
+
+**Diagnosis first, per this slice's own instruction** (item 1) — queried the real `/api/intent` endpoint
+directly with the exact reported message before changing anything:
+```
+guestCount: 6            travelingWithPets: true         petCount: 2
+flexibleConstraints: ["within an hour from home"]   (landed in a soft tier this run — model
+                                                       classification varies run to run, unrelated
+                                                       to this bug)
+```
+This confirmed the extraction was never broken — `guestCount`/`travelingWithPets`/`petCount` were
+correctly structured, and the evaluator's own synthetic `capacityCheck`/`petCheck` (in `evaluate.ts`)
+already enforce them, which is exactly why the No Match copy could name them. The actual bug was
+isolated to exactly one place: `TripRequirementsList` (`src/components/campops/trip-requirements-list.tsx`)
+read directly off the four literal `TripIntent` arrays (`hardRequirements`/`flexibleConstraints`/
+`preferences`/`priorities`) — and `guestCount`/`travelingWithPets`/`petCount` are deliberately never
+echoed into those arrays as text (by design, so the model doesn't duplicate a structured fact as free
+text the evaluator would then keyword-match a second time). The panel was reading the wrong source of
+truth for those two fields; the evaluator was never the problem.
+
+**Fix 1 — Trip Requirements projection** (`src/lib/requirements.ts`'s new `getDerivedRequirements`,
+wired into `TripRequirementsList`): projects the exact same structured fields the evaluator already
+reads — `guestCount` -> `capacityRequirementLabel` (newly exported from `evaluate.ts` so the panel and
+the evaluator/No-Match copy can never drift apart — one function, two call sites, not a hand-typed
+duplicate string) and `travelingWithPets`/`petCount` -> a new, panel-only `petPanelLabel`. These render
+as **non-removable** chips (no `onRemove` wired for them) — the exact same treatment this file's own
+2026-09-01 doc comment already established for the Candidate Card's synthetic "Capacity for N" chip:
+there is no literal array entry to remove, and routing "remove" through a real guestCount/petCount edit
+was explicitly out of scope (see the amendment above). `RequirementChip`'s `onRemove` was already
+optional for exactly this reason — no new component was built, per this slice's own instruction.
+
+**Pet count preserved as real information, not collapsed to a boolean** (item 4): `petPanelLabel(2)` ->
+`"Pet-friendly for 2 pets"`, not a generic "Pet-friendly" — the schema has no pet-species field, so this
+says "pets", not "dogs" (saying "dogs" would invent information the structured intent never actually
+captured, even though this exact bug report's own wording said "two dogs"). Deliberately does NOT touch
+`evaluate.ts`'s own `petCheck` label (kept as plain `"Pet-friendly"`, unchanged) — that string is
+exercised by roughly two dozen existing regression assertions (No Match copy, Candidate Card
+preserved/compromise chips, `smoke-test-pet-requirement.ts`'s exact-label checks) and changing it was
+unnecessary risk for a gap that was specifically about the PANEL, not the No Match/Candidate Card text
+(which the bug report itself already confirmed was correct). The two pet labels are intentionally
+different strings describing the exact same underlying `petCount`/`petPolicy.maxPets` enforcement — "no
+new information," just a richer presentation, in the one place the request asked for it.
+
+**Fix 2 — Party-Composition Inference**: added `TripIntent.travelingWithChildren`/`childCount`,
+mirroring `travelingWithPets`/`petCount` exactly (same schema shape, same prompt-writing pattern in
+`src/app/api/intent/route.ts`). The prompt is explicit that this is about CHILD COMPOSITION, not
+headcount — "4 adults and 2 kids" and "6 people" both produce `guestCount: 6`, but only the first should
+set `travelingWithChildren: true`; "6 adults"/"a group of 6" must leave it false. New
+`src/lib/family-inference.ts`'s `applyFamilyPreferenceInference` is the deterministic APPLICATION-side
+decision this enables: model classifies the language (as it always does), application decides the
+consequence (adds `"Family-friendly"` to `preferences` — a real, literal array entry, not a hidden flag)
+— the same model-handles-language/application-handles-truth split this codebase has used for every prior
+inference in this file.
+
+**Only fires on a false -> true transition, never unconditionally** (this is the one subtle piece):
+`applyFamilyPreferenceInference` is called with `(priorIntent, freshIntent)` and only inserts the
+preference when `travelingWithChildren` just became true THIS turn. Reasoning it through: the model
+returns a fresh `TripIntent` every turn, expected to preserve `priorIntent`'s established facts
+(including `travelingWithChildren`) unless the new message changes them. If this function re-derived the
+preference from the boolean unconditionally on every turn, then removing the "Family-friendly" chip
+(a purely client-side, non-model-informed edit via `removeRequirement`) would get silently undone the
+very next time the model responds to an unrelated message — the exact same tug-of-war class already
+solved for composer focus in the slice above this one. Comparing against `priorIntent` (the app's own
+real current state, which already reflects any prior removal) closes that gap for free: once established,
+the preference persists or is removed exactly like any other soft preference, and is never force-reinserted
+behind the user's back.
+
+**A real gap found while writing the "don't duplicate a stronger tier" regression test**: the dedup
+guard (`hasFamilyMention`, checking all four tiers before inserting) and `evaluate.ts`'s own
+`checkConstraint` family branch both originally matched only `"famil"`. Item 6's own example language —
+"it needs to be good for kids", "kid-friendly is a must" — would be classified by the model into a
+stronger tier using "kid"/"child" wording that neither the evaluator NOR the dedup guard would recognize
+as family-related, risking both a duplicate soft "Family-friendly" AND, separately, that stronger label
+evaluating as "unverifiable" instead of against `site.familyFeatures`. Fixed by broadening both to
+`famil|kid|child` — found via a failing regression assertion before this ever reached live testing, not
+via a live bug.
+
+**Everything downstream needed no new code, by construction**: because "Family-friendly" lands as an
+ordinary `preferences` string, `evaluate.ts`'s existing soft-check pipeline (`checkConstraint`'s family
+branch, already grounded in real `site.familyFeatures`) picks it up automatically — satisfied preferences
+already flow into `preserved` (Candidate Card "How this fits", item 11), an unsatisfied one already flows
+into `compromises` with `UNMET_PREFERENCE_PREFIX` ("Didn't fully match: Family-friendly", never the
+hard-failure `UNSATISFIED_PREFIX`, so it can never contaminate `no-match.ts`'s failing-hard-label
+extraction — item 12), and because `preferences` is a SOFT tier, `classifyMatchType` (which only ever
+inspects `hardChecks`) can never let it cause a `no_match` on its own. None of this required touching
+`evaluate.ts`'s matching/ranking logic at all — the entire fix is "make the application insert one more
+literal string into an array the evaluator already knows how to interpret."
+
+**Removal semantics** (item 9), each locked down by both a regression test and live verification:
+- **Capacity / pet count** — non-removable (no `onRemove` at all), so there is no way to hide the chip
+  while `guestCount`/`travelingWithPets` remain set; the underlying structured fact and its visibility
+  can never diverge.
+- **Family-friendly** — fully removable via the existing `removeRequirement` path, since it's a literal
+  `preferences` entry like any other. Removing it touches only `preferences`; `travelingWithChildren`/
+  `childCount` are untouched, so the children never leave the party's structured state, only the derived
+  preference chip disappears. Verified live: removing it, then sending an unrelated follow-up message,
+  confirmed the chip does not reappear.
+
+**Principles** (item 16):
+- Explicit party composition can carry semantic meaning beyond headcount — "4 adults and 2 kids" and "6
+  people" are not the same claim even when `guestCount` agrees.
+- Mentioning children may infer a soft Family-friendly preference; generic party size never does.
+- Derived deterministic constraints and inferred soft preferences must remain visibly aligned with the
+  active TripIntent — a fact the evaluator enforces but the UI can't show is exactly the bug class this
+  slice closes, and it's now closed by both re-deriving from the same fields (not a duplicate hand-typed
+  copy) and by a regression test asserting the evaluator's own computed checks and the panel's projection
+  never diverge.
+
+**Verified in this environment**: new `scripts/smoke-test-party-composition.ts` (19 assertions: capacity/
+pet projection present and absent-when-unset, pet count preserved as real structured information (never
+collapsed to a boolean), the existing 2-dogs-vs-maxPets-1 enforcement re-locked-down at this layer,
+Family-friendly inferred only on an explicit false->true transition (not unconditionally, not for
+generic headcount, not for "adults"-only phrasing), no duplicate/downgrade when a stronger tier already
+carries a family-related label, satisfied/unsatisfied Family-friendly flowing into preserved/compromise
+correctly, a soft Family-friendly miss never causing `no_match`, evaluator-vs-panel alignment, removal
+preserving party composition, and derived hard requirements being un-hideable while their structured
+state remains active); all pre-existing regression scripts re-verified passing; `tsc --noEmit`, `eslint`,
+`next build` all clean. Live verification against the real GPT-5.4-mini endpoint, desktop (1440×900) and
+mobile (390×844): the exact reported message, followed by a ZIP and "Labor Day weekend", showed
+"Capacity for 6" and "Pet-friendly for 2 pets" as non-removable Hard chips and "Family-friendly" as a
+removable Preferred chip throughout, surviving every prerequisite turn; the eventual Candidate Card
+explanation read "...it satisfies Capacity for 6, Pet-friendly, Available for your dates, Family-friendly,
+at $105/night and 55 mi away. It's family-friendly — nearby restrooms." with "Didn't fully match: within
+an hour from home" shown honestly as a separate soft compromise. Comparison messages confirmed the
+inference boundary live: "a campsite for 6 people within an hour from my home" and "a campsite for 6
+adults within an hour from my home" both showed Capacity for 6 with NO Family-friendly; "camping with my
+two kids" showed Family-friendly with no capacity stated. Removal verified live: Capacity/pet chips have
+no remove control at all; the Family-friendly chip does, removing it makes the chip disappear, and it
+does not reappear after an unrelated follow-up turn. Zero console errors across every run.

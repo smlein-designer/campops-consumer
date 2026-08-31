@@ -58,6 +58,18 @@ export const TripIntentSchema = z.object({
     .describe(
       "The actual number of pets coming, ONLY when travelingWithPets is true. 'my dog'/'a dog' -> 1. 'two dogs' -> 2. A genuinely unspecified plural ('we have dogs', count not stated) -> null (never guess a count). Always null when travelingWithPets is false.",
     ),
+  travelingWithChildren: z
+    .boolean()
+    .describe(
+      "Trip Requirement Projection + Party-Composition Inference (2026-09-10 — see docs/implementation-decisions.md): true ONLY when the user explicitly identifies children as part of THIS camping party — '2 adults and 2 kids', 'my wife and I with our two children', '4 adults, two kids', 'camping with the kids', 'me, my partner, and our 8-year-old'. This is about explicit CHILD COMPOSITION, not raw headcount: a generic party size ('6 people', 'a group of 6', 'six adults') must leave this false even though guestCount is filled in — there is nothing in that phrasing distinguishing adults from children. The application uses this fact to decide whether a soft family-friendly preference applies; it never infers that from guestCount alone. Leave false (the default) whenever the message doesn't explicitly call out a child.",
+    ),
+  childCount: z
+    .number()
+    .int()
+    .nullable()
+    .describe(
+      "The actual number of children explicitly identified, ONLY when travelingWithChildren is true — mirrors petCount's own rule. 'our kid'/'my son' (singular) -> 1. 'two kids' -> 2. A genuinely unspecified plural ('camping with the kids', count not stated) -> null (never guess a count). Always null when travelingWithChildren is false.",
+    ),
   budget: z
     .object({
       maxTotal: z
@@ -106,6 +118,8 @@ export const EMPTY_TRIP_INTENT: TripIntent = {
   destinationRegion: null,
   travelingWithPets: false,
   petCount: null,
+  travelingWithChildren: false,
+  childCount: null,
   budget: null,
   hardRequirements: [],
   flexibleConstraints: [],

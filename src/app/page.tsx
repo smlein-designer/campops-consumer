@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Header } from "@/components/campops/header";
 import { CampIllustration } from "@/components/campops/camp-illustration";
-import { Composer, COMPOSER_INPUT_ID } from "@/components/campops/composer";
+import { Composer } from "@/components/campops/composer";
 import { ChatBubble, ChatRow } from "@/components/campops/chat-bubble";
 import { CandidateCard } from "@/components/campops/candidate-card";
 import { AttentionCard } from "@/components/campops/attention-card";
@@ -32,6 +32,7 @@ import {
 import { checkRecommendationReadiness } from "@/lib/recommendation-readiness";
 import { looksLikeDateAttempt, normalizeDatePhrase } from "@/lib/dates";
 import { normalizeDestinationRegion } from "@/lib/geography";
+import { applyFamilyPreferenceInference } from "@/lib/family-inference";
 import { AMENITY_LABELS } from "@/lib/amenities";
 import { answerCandidateQuestion, detectCandidateQuestion } from "@/lib/candidate-facts";
 import {
@@ -256,6 +257,70 @@ export default function Home() {
   // it" / "user corrections must override prior agent assumptions".
   const intentGenerationRef = useRef(0);
 
+  // Persistent Composer Focus (2026-09-09 — see
+  // docs/implementation-decisions.md): the composer is the default
+  // conversational focus target after a submission, but an explicit user
+  // focus change always wins. `composerInputRef` is a real ref to the
+  // actual <input> DOM node (forwarded through Composer — see its own doc
+  // comment), the SAME ref passed to both the landing-screen and
+  // active-conversation Composer instances, so it reattaches correctly
+  // across that unmount/mount transition.
+  //
+  // `pendingComposerFocusRef` is the "focus is pending" flag from the
+  // simplest version of the pattern the request itself suggested:
+  // handleSubmit sets it true; a document-level pointerdown/keydown on
+  // anything other than the composer input cancels it (an explicit user
+  // interaction with another control always wins — this is the ONE
+  // low-level listener this slice adds, not a general focus-management
+  // system); the effect below consumes it (one-shot) the moment the
+  // composer becomes focusable again.
+  const composerInputRef = useRef<HTMLInputElement>(null);
+  const pendingComposerFocusRef = useRef(false);
+
+  useEffect(() => {
+    function cancelPendingFocusIfElsewhere(e: Event) {
+      // While the composer is disabled (isWorking), it can't be an event
+      // target at all — a keystroke the user fires off right after
+      // submitting lands on <body> by fallback, not because they clicked
+      // or tabbed to anything. That's not an explicit focus change, it's
+      // the same "still talking to the composer" intent this feature
+      // exists to serve (request item 7/8) — found via live verification,
+      // 2026-09-09, see docs/implementation-decisions.md. Only a REAL
+      // other element (a button, a dialog, a chip) should cancel the
+      // pending refocus.
+      if (e.target !== composerInputRef.current && e.target !== document.body) {
+        pendingComposerFocusRef.current = false;
+      }
+    }
+    // Capture phase, so this always sees the interaction before any
+    // component-level handler (e.g. a dialog's own focus trap) runs and
+    // potentially stops propagation.
+    document.addEventListener("pointerdown", cancelPendingFocusIfElsewhere, true);
+    document.addEventListener("keydown", cancelPendingFocusIfElsewhere, true);
+    return () => {
+      document.removeEventListener("pointerdown", cancelPendingFocusIfElsewhere, true);
+      document.removeEventListener("keydown", cancelPendingFocusIfElsewhere, true);
+    };
+  }, []);
+
+  // Restores focus the moment the composer becomes interactable again
+  // (isWorking flips back to false, so the <input> is no longer
+  // `disabled` — a disabled element cannot hold focus at all, which is
+  // why this must wait for that exact transition rather than firing
+  // immediately on submit). Deliberately keyed on `isWorking` alone, not a
+  // timer: this is the smallest reliable signal for "the composer just
+  // became focusable," and React guarantees this effect runs after the
+  // DOM has already committed the (now-enabled) input. A one-shot flag —
+  // if nothing else claimed focus in the meantime (see the listener
+  // above), the composer regains it; otherwise this is a no-op, so an
+  // explicit user focus change always wins, and this never fights it.
+  useEffect(() => {
+    if (isWorking) return;
+    if (!pendingComposerFocusRef.current) return;
+    pendingComposerFocusRef.current = false;
+    composerInputRef.current?.focus();
+  }, [isWorking]);
+
   const hasStarted = messages.length > 0;
   const activeCandidate = evaluation?.candidates[candidateIndex] ?? null;
   const showCandidateCard =
@@ -426,6 +491,18 @@ export default function Home() {
         }),
       });
       const data = await res.json();
+      // Public Demo Rate Limiting (2026-09-08 — see
+      // docs/implementation-decisions.md): a concise, human message —
+      // never the generic error path, never a full-screen error state, and
+      // never a reset of the in-progress task. The user's messages/intent
+      // so far are untouched; they can just try again shortly.
+      if (res.status === 429) {
+        pushChat(
+          "agent",
+          "You've sent a lot of requests in a short time. Try again in a moment.",
+        );
+        return;
+      }
       if (!res.ok)
         throw new Error(data.error ?? "Intent interpretation failed.");
 
@@ -550,10 +627,19 @@ export default function Home() {
       // " area") so "near Austin"/"San Antonio area" match the dataset's
       // real city/region names the same way "Hill Country"/"East Texas"
       // already do, without relying on the model to have stripped it.
-      const normalizedIntent: TripIntent = {
-        ...dateNormalizedIntent,
-        destinationRegion: normalizeDestinationRegion(dateNormalizedIntent.destinationRegion),
-      };
+      // Party-Composition Inference (2026-09-10 — see
+      // docs/implementation-decisions.md): applied against `priorIntent`
+      // (the app's own real established state, including any prior chip
+      // removal) so this only fires on the turn `travelingWithChildren`
+      // first becomes true — never re-forcing the preference back in on a
+      // later, unrelated turn after the user has removed it.
+      const normalizedIntent: TripIntent = applyFamilyPreferenceInference(
+        priorIntent,
+        {
+          ...dateNormalizedIntent,
+          destinationRegion: normalizeDestinationRegion(dateNormalizedIntent.destinationRegion),
+        },
+      );
 
       const intentEvent = deriveIntentEvent(
         priorIntent,
@@ -737,6 +823,12 @@ export default function Home() {
   }
 
   function handleSubmit() {
+    // Persistent Composer Focus (2026-09-09): both Send-click and Enter
+    // submit through this one function, so this is the single place that
+    // marks composer focus as pending — never set for handleQuickReply,
+    // which is the user explicitly clicking a different control and
+    // should not have focus dragged back to the composer afterward.
+    pendingComposerFocusRef.current = true;
     void submitMessage(draft);
   }
 
@@ -817,7 +909,11 @@ export default function Home() {
   }
 
   function handleChangeRequirement() {
-    document.getElementById(COMPOSER_INPUT_ID)?.focus();
+    // Explicit, immediate "let me type in the composer" action (the No
+    // Match Attention Card's "Change a requirement" button) — unrelated to
+    // the pending-after-submit mechanism above; this one always focuses
+    // right away, the same real ref the rest of this feature uses.
+    composerInputRef.current?.focus();
   }
 
   /**
@@ -1188,12 +1284,21 @@ export default function Home() {
             </div>
             <div className="relative z-10 w-full max-w-[560px]">
               <Composer
+                ref={composerInputRef}
                 value={draft}
                 onChange={setDraft}
                 onSubmit={handleSubmit}
                 isWorking={isWorking}
               />
             </div>
+            {/* Unobtrusive prototype disclaimer — small, muted, shown only
+                on the initial landing screen (not repeated on every
+                subsequent screen, where it would compete with real trip
+                content). */}
+            <p className={`${text.caption} relative z-10 max-w-[480px] text-muted-foreground`}>
+              CampOps is a product design prototype. Campground inventory,
+              availability, pricing, payments, and reservations are simulated.
+            </p>
           </div>
         ) : (
           <>
@@ -1237,6 +1342,7 @@ export default function Home() {
                 </div>
                 <div className="relative z-10">
                   <Composer
+                    ref={composerInputRef}
                     value={draft}
                     onChange={setDraft}
                     onSubmit={handleSubmit}
