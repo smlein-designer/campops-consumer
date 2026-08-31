@@ -1,0 +1,35 @@
+<svg width="1440" height="960" viewBox="0 0 1440 960" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_64_393)">
+<path d="M1440 0H0V600H1440V0Z" fill="url(#paint0_linear_64_393)"/>
+<path d="M1280 158C1306.51 158 1328 136.51 1328 110C1328 83.4903 1306.51 62 1280 62C1253.49 62 1232 83.4903 1232 110C1232 136.51 1253.49 158 1280 158Z" fill="#FBF3DD"/>
+<path opacity="0.85" d="M0 600V460L200 380L380 440L620 340L860 420L1100 360L1300 400L1440 370V600H0Z" fill="#6E96B0"/>
+<path d="M0 960V610C266.667 563.333 506.667 556.667 720 590C933.333 623.333 1173.33 613.333 1440 560V960H0Z" fill="#6B4A2F"/>
+<path d="M660 600C620 670 710 720 660 790C625 840 700 875 680 960H750C730 910 675 880 705 830C735 775 680 740 710 600H660Z" fill="#16324A"/>
+<path opacity="0.5" d="M690 615C665 675 715 715 685 765H705C725 720 670 685 700 620L690 615Z" fill="#8FC1DE"/>
+<path d="M85 630H115L100 582L85 630Z" fill="#2F4F25"/>
+<path d="M80 636H110L95 589L80 636Z" fill="#4C7A3A"/>
+<path d="M316 690H364L340 622L316 690Z" fill="#2F4F25"/>
+<path d="M306 698H354L330 632L306 698Z" fill="#4C7A3A"/>
+<path d="M522 600H558L540 552L522 600Z" fill="#2F4F25"/>
+<path d="M516 606H552L534 559L516 606Z" fill="#4C7A3A"/>
+<path d="M976 675H1024L1000 607L976 675Z" fill="#2F4F25"/>
+<path d="M966 683H1014L990 617L966 683Z" fill="#4C7A3A"/>
+<path d="M1212 705H1248L1230 657L1212 705Z" fill="#2F4F25"/>
+<path d="M1206 711H1242L1224 664L1206 711Z" fill="#4C7A3A"/>
+<path d="M1030 952H1130L1080 838L1030 952Z" fill="#F3ECE4"/>
+<path d="M1080 838L1130 952H1112L1080 838Z" fill="#DCCFC0"/>
+<path d="M1080 838V952" stroke="#16324A" stroke-width="2"/>
+<path d="M1135 955H1205L1170 872L1135 955Z" fill="#F3ECE4"/>
+<path d="M1170 872L1205 955H1190L1170 872Z" fill="#DCCFC0"/>
+<path d="M1170 872V955" stroke="#16324A" stroke-width="2"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_64_393" x1="0" y1="0" x2="0" y2="600" gradientUnits="userSpaceOnUse">
+<stop stop-color="#DCEEF6"/>
+<stop offset="1" stop-color="#8FC1DE"/>
+</linearGradient>
+<clipPath id="clip0_64_393">
+<rect width="1440" height="960" fill="white"/>
+</clipPath>
+</defs>
+</svg>

@@ -32,7 +32,17 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${caprasimo.variable} ${publicSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans">{children}</body>
+      {/* suppressHydrationWarning: browser extensions (e.g. ColorZilla's
+          cz-shortcut-listen) inject attributes onto <body> before React
+          hydrates — a known false-positive source for this exact warning,
+          not an app bug. Scoped to this one tag only; doesn't suppress any
+          other hydration mismatch. */}
+      <body
+        className="min-h-full flex flex-col font-sans"
+        suppressHydrationWarning
+      >
+        {children}
+      </body>
     </html>
   );
 }

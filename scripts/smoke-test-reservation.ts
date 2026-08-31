@@ -6,6 +6,7 @@
  */
 import { CAMPSITES } from "../src/lib/campsites";
 import { evaluateCampsites } from "../src/lib/evaluate";
+import { computeDateRange } from "../src/lib/dates";
 import {
   computeMissingFields,
   stageReservation,
@@ -38,17 +39,29 @@ function acceptedCandidateReservation(): Reservation {
   const intent: TripIntent = {
     ...EMPTY_TRIP_INTENT,
     guestCount: 4,
+    checkIn: "Sept 12",
+    checkOut: "Sept 14",
     hardRequirements: ["Pet-friendly", "Capacity for 4"],
   };
   const result = evaluateCampsites(intent);
   const top = result.candidates[0];
-  return stageReservation(top.campsite, intent.guestCount).reservation;
+  return stageReservation(
+    top.campsite,
+    intent.guestCount,
+    intent.checkIn as string,
+    intent.checkOut as string,
+  ).reservation;
 }
 
 // 1. Accepted candidate produces the correct staged reservation.
 run("Accepted candidate produces the correct staged reservation", () => {
   const site = CAMPSITES.find((c) => c.id === "blue-ridge-14")!;
-  const { reservation, event } = stageReservation(site, 4);
+  const { reservation, event } = stageReservation(
+    site,
+    4,
+    "Sept 12",
+    "Sept 14",
+  );
 
   assert(
     reservation.status === "staged",
@@ -62,9 +75,10 @@ run("Accepted candidate produces the correct staged reservation", () => {
     reservation.guestCount === 4,
     "guest count carried over from TripIntent",
   );
+  const expectedNights = computeDateRange("Sept 12", "Sept 14")!.nights;
   assert(
-    reservation.nights === site.nights,
-    "nights sourced from campsite record",
+    reservation.nights === expectedNights,
+    "nights derived from the actual requested check-in/check-out, not a campsite property (Dataset Depth correction, 2026-09-04)",
   );
   assert(
     reservation.nightlyRate === site.pricePerNight,
@@ -75,7 +89,7 @@ run("Accepted candidate produces the correct staged reservation", () => {
     "service fee sourced from campsite record",
   );
   const expectedTotal =
-    Math.round((site.pricePerNight * site.nights + site.serviceFee) * 100) /
+    Math.round((site.pricePerNight * expectedNights + site.serviceFee) * 100) /
     100;
   assert(
     reservation.total === expectedTotal,

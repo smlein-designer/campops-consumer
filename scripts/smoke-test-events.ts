@@ -235,6 +235,8 @@ run(
     const intent: TripIntent = {
       ...EMPTY_TRIP_INTENT,
       guestCount: 4,
+      checkIn: "Sept 12",
+      checkOut: "Sept 14",
       hardRequirements: ["Pet-friendly"],
     };
     const result = evaluateCampsites(intent);
@@ -242,7 +244,12 @@ run(
 
     const events: TaskEvent[] = [];
     events.push(deriveRecommendationAcceptedEvent(top));
-    const staged = stageReservation(top.campsite, intent.guestCount);
+    const staged = stageReservation(
+      top.campsite,
+      intent.guestCount,
+      intent.checkIn as string,
+      intent.checkOut as string,
+    );
     events.push(staged.event);
 
     const attempt1 = transitionReservation(staged.reservation, {

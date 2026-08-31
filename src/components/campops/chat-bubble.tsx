@@ -5,11 +5,16 @@ import { text } from "@/lib/typography";
  *
  * Hugs its own content up to a max-width cap, then wraps — never stretches
  * to fill its row. Alignment is handled by the parent row, not the bubble.
+ *
+ * Cap is responsive by default (Handoff Spec 2.3: "280px mobile, 640px
+ * desktop, set per placement") — callers that pass an explicit narrower
+ * desktop cap (e.g. the Closing screen's 480px) should pass a responsive
+ * pair of their own rather than a single fixed value.
  */
 export function ChatBubble({
   sender,
   message,
-  maxWidthClassName = "max-w-[640px]",
+  maxWidthClassName = "max-w-[280px] lg:max-w-[640px]",
 }: {
   sender: "user" | "agent";
   message: string;

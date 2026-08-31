@@ -39,9 +39,18 @@ function describeChange(lost: Candidate, adapted: Candidate): string {
       `price goes ${direction} to $${adapted.campsite.pricePerNight}/night`,
     );
   }
-  if (adapted.campsite.distanceMiles !== lost.campsite.distanceMiles) {
+  // Dataset Depth correction (2026-09-04): distance is only ever the real,
+  // origin-derived value carried on the Candidate itself (src/lib/geo.ts) —
+  // there is no separate, origin-independent distance field on a campsite
+  // record to compare instead. Omitted entirely (never a fabricated "0 mi")
+  // when no origin ZIP is known for either candidate.
+  if (
+    adapted.distanceFromOriginMiles !== null &&
+    lost.distanceFromOriginMiles !== null &&
+    adapted.distanceFromOriginMiles !== lost.distanceFromOriginMiles
+  ) {
     parts.push(
-      `it's ${adapted.campsite.distanceMiles} mi away instead of ${lost.campsite.distanceMiles}`,
+      `it's ${adapted.distanceFromOriginMiles} mi away instead of ${lost.distanceFromOriginMiles}`,
     );
   }
   if (adapted.compromises.length > 0) {

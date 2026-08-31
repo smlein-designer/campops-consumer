@@ -13,6 +13,12 @@ export const COMPOSER_INPUT_ID = "campops-composer-input";
  * State rule: Send is the default; swap to Stop only while the agent is
  * actively processing. Never show both simultaneously.
  *
+ * Send uses the default (44px) Button size, not "sm" — the Handoff Spec
+ * text calls it "Send button (Primary, small)", but the live Figma render
+ * (source of truth when the two disagree) shows it filling nearly the full
+ * 52px composer bar height, matching the default size, not the ~28px small
+ * one. Found during a live visual-fidelity check, 2026-09-01.
+ *
  * `isWorking` and `disabled` are distinct signals, deliberately not
  * conflated: `isWorking` means "actively processing, showing Stop" (a state
  * the user can interrupt); `disabled` means "not accepting input right now
@@ -40,7 +46,7 @@ export function Composer({
 }) {
   return (
     <form
-      className="flex h-[52px] w-full items-center gap-2 rounded-lg border border-border bg-card py-2 pr-2 pl-4"
+      className="flex h-[52px] w-full items-center gap-2 rounded-lg border border-border bg-card py-2 pr-2 pl-4 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
       onSubmit={(e) => {
         e.preventDefault();
         if (!isWorking && !disabled && value.trim()) onSubmit();
@@ -58,12 +64,12 @@ export function Composer({
         <button
           type="button"
           aria-label="Stop"
-          className="flex size-11 shrink-0 items-center justify-center rounded-full border border-border text-destructive"
+          className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border text-destructive"
         >
           <CircleStop className="size-5" />
         </button>
       ) : (
-        <Button type="submit" size="sm" disabled={disabled || !value.trim()}>
+        <Button type="submit" disabled={disabled || !value.trim()}>
           Send
         </Button>
       )}

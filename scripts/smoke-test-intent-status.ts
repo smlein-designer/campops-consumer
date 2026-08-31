@@ -76,16 +76,23 @@ async function main() {
   // 2 & 3. Clarification answer merges with existing intent; already-known
   // fields survive.
   {
+    // "I'm bringing my dog" is one of the Pet Requirement correction's own
+    // explicit examples of a HARD, structural pet fact — must land in the
+    // dedicated `travelingWithPets` boolean, never as free hardRequirements
+    // text (see docs/implementation-decisions.md, 2026-09-03).
     const turnA = await call(
-      "A 4-person, pet-friendly trip. Not sure about dates yet.",
+      "A 4-person trip. I'm bringing my dog. Not sure about dates yet.",
     );
     console.log("\n[turnA] ->", JSON.stringify(turnA.json.interpretation));
     const intentA = turnA.json.interpretation?.intent;
     assert(intentA?.guestCount === 4, "turn A: guestCount captured");
     assert(
-      Array.isArray(intentA?.hardRequirements) &&
-        intentA.hardRequirements.some((h: string) => /pet/i.test(h)),
-      "turn A: pet-friendly captured as a hard requirement",
+      intentA?.travelingWithPets === true,
+      "turn A: bringing a dog captured as the structured travelingWithPets fact",
+    );
+    assert(
+      !(intentA?.hardRequirements ?? []).some((h: string) => /pet|dog/i.test(h)),
+      "turn A: pet intent is NOT also duplicated as free hardRequirements text",
     );
 
     const turnB = await call("Let's do Sept 20 to 22.", intentA);
@@ -96,9 +103,8 @@ async function main() {
       "already-known guestCount survives the clarification answer",
     );
     assert(
-      Array.isArray(intentB?.hardRequirements) &&
-        intentB.hardRequirements.some((h: string) => /pet/i.test(h)),
-      "already-known pet-friendly requirement survives the clarification answer",
+      intentB?.travelingWithPets === true,
+      "already-known travelingWithPets survives the clarification answer",
     );
     assert(
       turnB.json.interpretation?.status === "actionable",

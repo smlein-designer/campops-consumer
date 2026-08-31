@@ -39,6 +39,10 @@ function DialogOverlay({
   );
 }
 
+// Focusable-selector used by the manual Tab-wrap guard below.
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 function DialogContent({
   className,
   children,
@@ -47,15 +51,52 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
 }) {
+  const popupRef = React.useRef<HTMLDivElement>(null);
+
+  // Defensive focus-trap backstop (found during the accessibility audit,
+  // 2026-09-01 — see docs/implementation-decisions.md): Base UI's Dialog is
+  // modal by default and normally traps focus itself, but for a dialog
+  // opened via an external state change rather than a rendered
+  // `DialogTrigger` (both this app's dialogs open this way — Authorize
+  // Booking and the mobile Trip Details sheet), Tab was observed
+  // intermittently escaping to background page content instead of wrapping
+  // within the dialog. Rather than replace the library's own modal
+  // machinery, this adds a plain, self-contained Tab/Shift+Tab wrap as a
+  // guarantee that never depends on diagnosing that internal behavior.
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+    const root = popupRef.current;
+    if (!root) return;
+    const focusable = Array.from(
+      root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ).filter((el) => el.offsetParent !== null);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const activeInside = active instanceof Node && root.contains(active);
+    if (event.shiftKey) {
+      if (!activeInside || active === first) {
+        event.preventDefault();
+        last.focus();
+      }
+    } else if (!activeInside || active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Popup
+        ref={popupRef}
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
+        onKeyDown={handleKeyDown}
         {...props}
       >
         {children}

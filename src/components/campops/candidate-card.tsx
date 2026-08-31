@@ -1,6 +1,7 @@
 import { Banknote, CalendarDays, MapPin, Users } from "lucide-react";
 import { text } from "@/lib/typography";
 import { RequirementChip } from "@/components/campops/requirement-chip";
+import { rawRequirementLabel } from "@/lib/requirements";
 
 function Fact({
   icon,
@@ -31,6 +32,16 @@ function Fact({
  * in the design — "the design specifies the affordance, not the interaction
  * logic" — so this slice renders the static photo indicators without real
  * carousel/lightbox behavior.
+ *
+ * Preserved/Compromise chip removal (design-resolution update, 2026-09-01):
+ * direct-manipulation chip removal is now available here too, not only on
+ * the Trip Panel's plain-chip fallback — the same remove control, wired to
+ * the same `onRemoveRequirement` state transition the caller also uses for
+ * the plain chip list. `removableHardLabels` gates it per-chip: only labels
+ * that correspond to a literal `hardRequirements` entry get a working remove
+ * icon (synthetic checks like "Capacity for 4" — derived from `guestCount`,
+ * not from requirement text — render the same non-interactive chip as
+ * always, since there is nothing in `hardRequirements` for them to remove).
  */
 export function CandidateCard({
   location,
@@ -44,6 +55,8 @@ export function CandidateCard({
   preserved,
   compromises,
   explanation,
+  removableHardLabels,
+  onRemoveRequirement,
 }: {
   location: string;
   siteName: string;
@@ -56,7 +69,16 @@ export function CandidateCard({
   preserved: string[];
   compromises: string[];
   explanation: string;
+  /** Set of raw `hardRequirements` labels currently removable this way. */
+  removableHardLabels?: Set<string>;
+  /** Called with the raw (unprefixed) requirement label to remove. */
+  onRemoveRequirement?: (rawLabel: string) => void;
 }) {
+  function removeHandlerFor(displayLabel: string): (() => void) | undefined {
+    const raw = rawRequirementLabel(displayLabel);
+    if (!removableHardLabels?.has(raw) || !onRemoveRequirement) return undefined;
+    return () => onRemoveRequirement(raw);
+  }
   return (
     <div className="flex w-full max-w-[460px] flex-col items-start gap-4 rounded-md border border-border bg-card">
       {/* Photo — illustrative placeholder, no real photo assets in the POC dataset */}
@@ -72,14 +94,18 @@ export function CandidateCard({
           <p className={`${text.bodySm} text-muted-foreground`}>{location}</p>
         </div>
 
-        <div className="flex w-full items-center justify-between">
-          <p className={`${text.labelLg} text-card-foreground`}>{siteName}</p>
+        <div className="flex w-full items-center justify-between gap-2">
+          <p
+            className={`${text.labelLg} min-w-0 truncate text-card-foreground`}
+          >
+            {siteName}
+          </p>
           <div className="shrink-0 rounded-full bg-secondary px-2 py-0.5">
             <span className={`${text.caption} font-semibold`}>{siteType}</span>
           </div>
         </div>
 
-        <div className="flex w-full flex-wrap items-start justify-between gap-y-3">
+        <div className="flex w-full flex-wrap items-start justify-between gap-x-4 gap-y-3">
           <Fact
             icon={<Users className="size-4 text-muted-foreground" />}
             label="Capacity"
@@ -130,10 +156,20 @@ export function CandidateCard({
           </span>
           <div className="flex flex-wrap items-start gap-1">
             {preserved.map((label) => (
-              <RequirementChip key={label} label={label} tier="hard" />
+              <RequirementChip
+                key={label}
+                label={label}
+                tier="hard"
+                onRemove={removeHandlerFor(label)}
+              />
             ))}
             {compromises.map((label) => (
-              <RequirementChip key={label} label={label} tier="flexible" />
+              <RequirementChip
+                key={label}
+                label={label}
+                tier="flexible"
+                onRemove={removeHandlerFor(label)}
+              />
             ))}
           </div>
         </div>

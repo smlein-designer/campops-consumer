@@ -18,9 +18,16 @@ const TIER_STYLES: Record<RequirementTier, string> = {
  * Preference = neutral (quietest tier) · Priority = water (requires weighing
  * a tradeoff).
  *
- * `onRemove` is optional so the same component can render non-interactively
- * inside Candidate Card's "Preserved"/"Compromise" rows (same visual tiers,
- * different semantic role — Handoff Spec 2.4).
+ * `onRemove` is optional so the same component can also render
+ * non-interactively — used inside Candidate Card's "Preserved"/"Compromise"
+ * rows for chips that don't correspond to a literal, removable
+ * `hardRequirements` entry (e.g. the synthetic "Capacity for N" check).
+ * Chips there that DO correspond to a literal entry get a working
+ * `onRemove` too, via the same removal path the Trip Panel's plain chip
+ * list uses (design resolution, 2026-09-01 — see
+ * docs/implementation-decisions.md) — this prop's optionality is what lets
+ * one screen mix removable and non-removable chips side by side, not a
+ * blanket "Candidate Card chips are display-only" rule.
  */
 export function RequirementChip({
   label,
@@ -41,7 +48,7 @@ export function RequirementChip({
           type="button"
           aria-label={`Remove ${label}`}
           onClick={onRemove}
-          className="flex size-[12px] shrink-0 items-center justify-center"
+          className="flex size-[12px] shrink-0 cursor-pointer items-center justify-center"
         >
           <X className="size-3" />
         </button>

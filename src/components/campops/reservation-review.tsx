@@ -30,7 +30,9 @@ function Badge({
  * share the same page shell and card layout closely enough to make that a
  * reasonable simplification — see docs/implementation-decisions.md.
  *
- * Desktop only for this slice, per agreed scope.
+ * Responsive: same single-column card layout at every width (Handoff Spec
+ * 4.3's Desktop/Mobile frames differ only in page margins, not structure) —
+ * `px-4`/reduced top padding below `lg`, full `w-[560px]` column at `lg`+.
  */
 export function ReservationReview({
   reservation,
@@ -47,16 +49,34 @@ export function ReservationReview({
   const reserveLabel = `Reserve ${campsite.siteName} — $${reservation.total.toFixed(2)}`;
   const isIncomplete = reservation.status === "incomplete";
   const isReserved = reservation.status === "reserved";
-  const missingPayment = missingFields.includes("Payment method");
+  // Payment Method visibility correction (Search Truth correction,
+  // 2026-09-02 — see docs/implementation-decisions.md): this must be
+  // visible on Reservation Review the moment it's missing, not only after
+  // a failed Reserve attempt (`isIncomplete`) — the user should never have
+  // to attempt-and-fail, or open the authorization modal, just to find out
+  // whether a payment method is on file.
+  const missingPayment = !reservation.paymentMethodLabel;
   const missingGuests = missingFields.includes("Guest count");
+  // Handoff Spec 3: status changes are announced via a polite live region,
+  // not by moving focus — mirrors the same Badge text already shown
+  // visually for each status, so staged→reserved (etc.) is announced even
+  // though the transition doesn't move focus anywhere.
+  const statusAnnouncement = isReserved
+    ? "Reserved"
+    : isIncomplete
+      ? "Missing information — staged, not yet booked"
+      : "Staged, not yet booked";
 
   if (isReserved) {
     return (
-      <div className="mx-auto flex w-[560px] flex-col items-start gap-6 pt-24">
+      <div className="mx-auto flex w-full max-w-[560px] flex-col items-start gap-6 px-4 pt-16 lg:px-0 lg:pt-24">
+        <div aria-live="polite" className="sr-only">
+          {statusAnnouncement}
+        </div>
         <p className={`${text.bodySm} text-muted-foreground`}>
           Your trip · {campsite.campgroundName}
         </p>
-        <div className="flex w-full items-center justify-between">
+        <div className="flex w-full flex-col items-start gap-2 lg:flex-row lg:items-center lg:justify-between">
           <p className={`${text.displayH3} text-foreground`}>
             You&rsquo;re all set
           </p>
@@ -96,11 +116,14 @@ export function ReservationReview({
   }
 
   return (
-    <div className="mx-auto flex w-[560px] flex-col items-start gap-6 pt-24">
+    <div className="mx-auto flex w-full max-w-[560px] flex-col items-start gap-6 px-4 pt-16 lg:px-0 lg:pt-24">
+      <div aria-live="polite" className="sr-only">
+        {statusAnnouncement}
+      </div>
       <p className={`${text.bodySm} text-muted-foreground`}>
         Your trip · {campsite.campgroundName}
       </p>
-      <div className="flex w-full items-center justify-between">
+      <div className="flex w-full flex-col items-start gap-2 lg:flex-row lg:items-center lg:justify-between">
         <p className={`${text.displayH3} text-foreground`}>
           Review your reservation
         </p>
@@ -146,9 +169,14 @@ export function ReservationReview({
           label="Service fee"
           value={`$${reservation.serviceFee.toFixed(2)}`}
         />
-        {isIncomplete && missingPayment && (
-          <SummaryRow label="Payment method" value="Not added" missing />
-        )}
+        {/* Always visible — not gated on `isIncomplete` (Payment Method
+            Visibility correction, 2026-09-02): the user must be able to
+            tell whether payment is on file straight from this screen. */}
+        <SummaryRow
+          label="Payment method"
+          value={reservation.paymentMethodLabel ?? "Not added"}
+          missing={missingPayment}
+        />
         <div className="h-px w-full bg-border" />
         <SummaryRow
           label="Total due today if authorized"
@@ -160,7 +188,7 @@ export function ReservationReview({
       </div>
 
       <div className="flex w-full items-center gap-2">
-        {isIncomplete && missingPayment ? (
+        {missingPayment ? (
           <Button variant="outline" onClick={onAddPaymentMethod}>
             Add payment method
           </Button>

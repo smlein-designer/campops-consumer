@@ -1,4 +1,6 @@
+import { computeDateRange } from "@/lib/dates";
 import type {
+  CancellationPolicy,
   Campsite,
   Reservation,
   ReservationEvent,
@@ -45,23 +47,88 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Builds a fresh, staged Reservation from an accepted Candidate's campsite. */
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** Formats an ISO `YYYY-MM-DD` as e.g. "Oct 3" — for cancellation-cutoff display only. */
+function formatISODateShort(iso: string): string {
+  const [, m, d] = iso.split("-").map(Number);
+  return `${MONTH_NAMES[m - 1]} ${d}`;
+}
+
+/**
+ * Builds the user-facing cancellation sentence from a campsite's structured
+ * policy, relative to the ACTUAL reservation's check-in date (Dataset Depth
+ * correction, 2026-09-04 — see docs/implementation-decisions.md). Replaces a
+ * literal, hard-coded cutoff string that stayed stale for every trip date
+ * other than the one it happened to be authored for.
+ */
+export function describeCancellationPolicy(
+  policy: CancellationPolicy,
+  checkInISO: string,
+): string {
+  // `new Date("YYYY-MM-DD")` parses as UTC midnight — reading it back with
+  // local-time getters (getDate/getMonth) silently shifts the date by a day
+  // in any timezone behind UTC. Parsed as explicit local-time components
+  // instead, so the cutoff math is never off by one depending on the
+  // server's timezone.
+  const [ciYear, ciMonth, ciDay] = checkInISO.split("-").map(Number);
+  const cutoff = new Date(ciYear, ciMonth - 1, ciDay);
+  cutoff.setDate(cutoff.getDate() - policy.freeUntilDaysBeforeCheckIn);
+  const cutoffLabel = formatISODateShort(
+    `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`,
+  );
+  const nights = policy.latePenaltyNights;
+  return `Free cancellation until ${cutoffLabel}. After that, ${nights} night${nights === 1 ? "" : "s"} ${nights === 1 ? "is" : "are"} non-refundable.`;
+}
+
+/**
+ * Builds a fresh, staged Reservation from an accepted Candidate's campsite.
+ *
+ * `checkIn`/`checkOut` are required (non-nullable) params, not optional —
+ * this makes "a reservation was staged without concrete dates" unrepresentable
+ * at the type level. The caller (`page.tsx`'s Accept handler) is responsible
+ * for running `checkBookingDatePrerequisites` first — which, as of the
+ * Dataset Depth correction (2026-09-04), also requires the pair to be
+ * RESOLVABLE to a real, positive-night date range (see
+ * `src/lib/prerequisites.ts`), so `computeDateRange` below is never null in
+ * practice; it throws rather than silently defaulting if that invariant is
+ * ever violated — inventory facts (nights, price, cancellation cutoff) are
+ * always derived from the trip's actual dates, never a campsite default.
+ *
+ * `dates` (the string the Reservation Review/Authorize Booking surfaces
+ * actually display) is built from these USER-STATED dates — the dates the
+ * user asked for, not any campsite-side default. `nights` (and therefore
+ * the nightly-rate math and the cancellation cutoff) is DERIVED from this
+ * exact pair, never sourced from a campsite property (Campsite has no
+ * `nights` field at all).
+ */
 export function stageReservation(
   campsite: Campsite,
   guestCount: number | null,
+  checkIn: string,
+  checkOut: string,
 ): { reservation: Reservation; event: TaskEvent } {
-  const total = round2(
-    campsite.pricePerNight * campsite.nights + campsite.serviceFee,
-  );
+  const range = computeDateRange(checkIn, checkOut);
+  if (!range) {
+    throw new Error(
+      `stageReservation requires a resolvable, positive-night date range ("${checkIn}" -> "${checkOut}") — caller must run checkBookingDatePrerequisites first.`,
+    );
+  }
+  const total = round2(campsite.pricePerNight * range.nights + campsite.serviceFee);
   const reservation: Reservation = {
     campsite,
     guestCount,
-    dates: `${campsite.datesAvailable} (${campsite.nights} night${campsite.nights === 1 ? "" : "s"})`,
-    nights: campsite.nights,
+    checkIn,
+    checkOut,
+    dates: `${checkIn} – ${checkOut} (${range.nights} night${range.nights === 1 ? "" : "s"})`,
+    nights: range.nights,
     nightlyRate: campsite.pricePerNight,
     serviceFee: campsite.serviceFee,
     total,
-    cancellationPolicy: campsite.cancellationPolicy,
+    cancellationPolicy: describeCancellationPolicy(campsite.cancellationPolicy, range.startISO),
     paymentMethodLabel: null,
     status: "staged",
     confirmationNumber: null,

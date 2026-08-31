@@ -94,11 +94,15 @@ run("summarizeNoMatch reflects only confirmed-failing labels", () => {
 });
 
 // 5. Widen Search modifies only the intended constraint(s).
+// Both scenarios below use ["RV site", "Cabin"] — a structurally impossible
+// combination regardless of dataset size (siteType is a single string, so
+// no record can ever be both), unlike a combination of independent boolean
+// attributes the expanded Texas dataset might happen to satisfy together.
 run("Widen Search modifies only the intended constraint", () => {
   const intent: TripIntent = {
     ...EMPTY_TRIP_INTENT,
-    guestCount: 6,
-    hardRequirements: ["Pet-friendly"],
+    guestCount: 4,
+    hardRequirements: ["RV site", "Cabin"],
   };
   const result = evaluateCampsites(intent);
   assert(
@@ -107,17 +111,15 @@ run("Widen Search modifies only the intended constraint", () => {
   );
 
   const { intent: widenedIntent, widened } = widenSearch(intent, result);
+  assert(widened === "RV site", `should widen "RV site" — got "${widened}"`);
   assert(
-    widened === "Pet-friendly",
-    `should widen "Pet-friendly" — got "${widened}"`,
-  );
-  assert(
-    widenedIntent.hardRequirements.length === 0,
+    widenedIntent.hardRequirements.length === 1 &&
+      widenedIntent.hardRequirements[0] === "Cabin",
     "the widened requirement is removed from hardRequirements, and only that one",
   );
   assert(
     widenedIntent.flexibleConstraints.length === 1 &&
-      widenedIntent.flexibleConstraints[0] === "Pet-friendly",
+      widenedIntent.flexibleConstraints[0] === "RV site",
     "the widened requirement moves to flexibleConstraints, and only that one",
   );
   assert(
@@ -137,8 +139,8 @@ run(
   () => {
     const intent: TripIntent = {
       ...EMPTY_TRIP_INTENT,
-      guestCount: 6,
-      hardRequirements: ["Pet-friendly"],
+      guestCount: 4,
+      hardRequirements: ["RV site", "Cabin"],
     };
     const initial = evaluateCampsites(intent);
     assert(
@@ -153,8 +155,8 @@ run(
       `widening should recover a full match — got ${recovered.kind}`,
     );
     assert(
-      recovered.candidates[0]?.campsite.id === "blue-ridge-22",
-      "the 6-capacity site is the recovered match",
+      recovered.candidates[0]?.campsite.id === "caddo-lake-4",
+      "the cheapest qualifying Cabin site (Dataset Depth rebalancing, 2026-09-04) is the recovered match",
     );
   },
 );

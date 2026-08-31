@@ -1,3 +1,4 @@
+import { UNSATISFIED_PREFIX } from "@/lib/evaluate";
 import type { EvaluationResult, TripIntent } from "@/lib/schemas";
 
 /**
@@ -8,15 +9,13 @@ import type { EvaluationResult, TripIntent } from "@/lib/schemas";
  * produced; neither invents a value.
  */
 
-const FAILED_PREFIX = "Doesn't satisfy: ";
-
 /** Distinct hard-requirement labels confirmed failing across every close candidate. */
 function failingHardLabels(evaluation: EvaluationResult): string[] {
   const labels = new Set<string>();
   for (const candidate of evaluation.candidates) {
     for (const compromise of candidate.compromises) {
-      if (compromise.startsWith(FAILED_PREFIX)) {
-        labels.add(compromise.slice(FAILED_PREFIX.length));
+      if (compromise.startsWith(UNSATISFIED_PREFIX)) {
+        labels.add(compromise.slice(UNSATISFIED_PREFIX.length));
       }
     }
   }

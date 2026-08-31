@@ -1,9 +1,11 @@
 import { CAMPSITES } from "@/lib/campsites";
+import { questionFor, type PrerequisiteKind } from "@/lib/prerequisites";
 import type {
   Candidate,
   EvaluationResult,
   EventActor,
   EventType,
+  RequirementTier,
   TaskEvent,
   TripIntent,
 } from "@/lib/schemas";
@@ -86,6 +88,22 @@ export function deriveUnsupportedEvent(): TaskEvent {
     "agent",
     "Asked about something outside campsite booking.",
   );
+}
+
+const TIER_LABEL: Record<RequirementTier, string> = {
+  hard: "hard requirement",
+  flexible: "flexible constraint",
+  preference: "preference",
+  priority: "priority",
+};
+
+/**
+ * Direct-manipulation chip removal (distinct from `requirement_refined`,
+ * which is the chat-driven merge path) — actor is "user" since this is
+ * something the person did directly, not an agent interpretation.
+ */
+export function deriveRequirementRemovedEvent(tier: RequirementTier, label: string): TaskEvent {
+  return makeEvent("requirement_removed", "user", `Removed "${label}" as a ${TIER_LABEL[tier]}.`);
 }
 
 export function deriveRequirementWidenedEvent(label: string): TaskEvent {
@@ -211,5 +229,93 @@ export function deriveTaskClosedEvent(
     reason === "reserved"
       ? "Task completed — reservation confirmed."
       : "Search closed.",
+  );
+}
+
+/**
+ * Deterministic Action Prerequisites (2026-09-01) — actor is "system", NOT
+ * "agent": the application itself detected that an objectively required
+ * structured field is missing before the requested action can proceed.
+ * This is never emitted for ordinary model-driven ambiguity (that stays
+ * `clarification_requested`, actor "agent") — see the `EventActor`
+ * doc comment in schemas.ts.
+ */
+export function derivePrerequisiteMissingEvent(
+  missing: PrerequisiteKind[],
+): TaskEvent {
+  return makeEvent(
+    "prerequisite_missing",
+    "system",
+    `Needs ${missing.join(" and ").replace(/_/g, " ")} before continuing: "${questionFor(missing)}"`,
+    { metadata: { missing: missing.join(",") } },
+  );
+}
+
+export function derivePrerequisiteResolvedEvent(
+  missing: PrerequisiteKind[],
+): TaskEvent {
+  return makeEvent(
+    "prerequisite_resolved",
+    "system",
+    `Received ${missing.join(" and ").replace(/_/g, " ")} — continuing.`,
+    { metadata: { missing: missing.join(",") } },
+  );
+}
+
+/**
+ * Recommendation-readiness gate (src/lib/recommendation-readiness.ts) —
+ * actor "system", the same deterministic-refusal shape as
+ * `prerequisite_missing`/`prerequisite_resolved`, but a genuinely distinct
+ * concept: every deterministic prerequisite was met here, the model judged
+ * the request actionable, and the application STILL declined to produce a
+ * specific recommendation because there isn't enough structured intent to
+ * explain one.
+ */
+export function deriveRecommendationReadinessInsufficientEvent(): TaskEvent {
+  return makeEvent(
+    "recommendation_readiness_insufficient",
+    "system",
+    "Not enough structured intent yet for a non-arbitrary recommendation — asked for more.",
+  );
+}
+
+export function deriveRecommendationReadinessSatisfiedEvent(): TaskEvent {
+  return makeEvent(
+    "recommendation_readiness_satisfied",
+    "system",
+    "Enough is known to make a meaningful recommendation.",
+  );
+}
+
+/**
+ * Active-Recommendation Follow-Up correction (2026-09-05 — see
+ * docs/implementation-decisions.md): a factual question about the active
+ * candidate was answered from real structured data — TripIntent was NOT
+ * touched. Actor "agent": CampOps' own interpretive work (recognizing the
+ * question and picking the right fact), distinct from a refinement's
+ * `requirement_refined` event, which only fires when intent actually
+ * changed.
+ */
+export function deriveCandidateQuestionAnsweredEvent(
+  topic: string,
+  candidateLabel: string,
+): TaskEvent {
+  return makeEvent(
+    "candidate_question_answered",
+    "agent",
+    `Answered a question about ${candidateLabel} (${topic.replace(/_/g, " ")}) — no change to your requirements.`,
+  );
+}
+
+/** Deterministic relative/holiday date-phrase normalization (src/lib/dates.ts). */
+export function deriveDatePhraseNormalizedEvent(
+  checkIn: string,
+  checkOut: string,
+): TaskEvent {
+  return makeEvent(
+    "date_phrase_normalized",
+    "system",
+    `Resolved the stated dates to ${checkIn} – ${checkOut}.`,
+    { metadata: { checkIn, checkOut } },
   );
 }

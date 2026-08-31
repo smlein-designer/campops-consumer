@@ -10,8 +10,11 @@ import type { Reservation } from "@/lib/schemas";
  * directly off the current Reservation, never re-derived or LLM-generated.
  * The commit button names the actual action and amount, never "Confirm".
  *
- * Desktop dialog only for this slice; the mobile bottom-sheet variant is
- * deferred along with the rest of responsive parity.
+ * Responsive Behavior (Handoff Spec §5): Desktop (≥1024px here) — centered
+ * modal, radius/md all corners. Mobile (<1024px here) — bottom sheet
+ * anchored to the viewport edge, radius/xl top corners only, drag handle.
+ * Same content and Popup element either way — only position/corners/width
+ * change, via responsive Tailwind variants on the one DialogContent.
  */
 export function AuthorizeBookingDialog({
   reservation,
@@ -38,15 +41,18 @@ export function AuthorizeBookingDialog({
     >
       <DialogContent
         showCloseButton={false}
-        className="max-w-[480px] gap-4 p-6"
+        className="w-full max-w-[480px] gap-4 rounded-md p-6 max-lg:top-auto max-lg:bottom-0 max-lg:left-0 max-lg:max-w-full max-lg:translate-x-0 max-lg:translate-y-0 max-lg:rounded-t-xl max-lg:rounded-b-none max-lg:pb-8 lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2"
       >
+        {/* Drag handle — decorative, mobile-only (Figma node 31:125). */}
+        <div className="mx-auto -mt-2 mb-1 h-1 w-9 shrink-0 rounded-full bg-border lg:hidden" />
         <DialogTitle className={`${text.displayH3} text-card-foreground`}>
           Confirm your reservation
         </DialogTitle>
         <p className={`${text.bodyBase} text-card-foreground`}>
           You&rsquo;re about to reserve {campsite.siteName} at{" "}
-          {campsite.campgroundName} for {campsite.datesAvailable}. This will
-          charge your saved payment method ${amount} now.
+          {campsite.campgroundName} for {reservation.checkIn} –{" "}
+          {reservation.checkOut}. This will charge your saved payment method $
+          {amount} now.
         </p>
         <div className="h-px w-full bg-border" />
         <SummaryRow
