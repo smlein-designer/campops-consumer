@@ -18,12 +18,14 @@ export function TripStatusBar({
   onViewDetails: () => void;
 }) {
   return (
-    <div className="flex w-full items-center justify-between border-b border-border bg-card px-4 py-2 lg:hidden">
-      <span className={`${text.labelSm} text-card-foreground`}>{label}</span>
+    <div className="flex w-full shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-4 py-2 lg:hidden">
+      <span className={`${text.labelSm} min-w-0 truncate text-card-foreground`}>
+        {label}
+      </span>
       <button
         type="button"
         onClick={onViewDetails}
-        className={`${text.labelSm} cursor-pointer text-muted-foreground underline`}
+        className={`${text.labelSm} shrink-0 cursor-pointer text-muted-foreground`}
       >
         View details ›
       </button>

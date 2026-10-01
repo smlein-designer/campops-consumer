@@ -1,10 +1,12 @@
 import { text } from "@/lib/typography";
 
 /**
- * Chat message bubble (Handoff Spec 2.3 / Figma DS node 2056:115).
+ * Chat message bubble (CampOps DS "Chat Bubble", Sender = User | Agent).
  *
  * Hugs its own content up to a max-width cap, then wraps — never stretches
  * to fill its row. Alignment is handled by the parent row, not the bubble.
+ * 16px corners with one square "tail" corner on the sender's side
+ * (bottom-right for the user, bottom-left for the agent).
  *
  * Cap is responsive by default (Handoff Spec 2.3: "280px mobile, 640px
  * desktop, set per placement") — callers that pass an explicit narrower
@@ -25,8 +27,8 @@ export function ChatBubble({
     <div
       className={`w-fit ${maxWidthClassName} rounded-xl px-4 py-2 ${text.bodyBase} ${
         isUser
-          ? "bg-water text-primary-foreground"
-          : "border border-border bg-card text-card-foreground"
+          ? "rounded-br-none bg-water text-primary-foreground"
+          : "rounded-bl-none border border-border bg-card text-card-foreground"
       }`}
     >
       {message}

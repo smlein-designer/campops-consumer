@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
-import { Caprasimo, Geist_Mono, Public_Sans } from "next/font/google";
+import { Geist_Mono, National_Park, Public_Sans } from "next/font/google";
 import "./globals.css";
 
-// Handoff Spec 1.3 Typography — Display/Heading styles use Caprasimo,
-// Body/Label/Caption styles use Public Sans.
-const caprasimo = Caprasimo({
-  variable: "--font-caprasimo",
-  weight: "400",
+// CampOps DS type ramp — Display/Heading styles use National Park
+// ExtraBold, Body/Label/Caption styles use Public Sans. (The DS file's
+// leftover `family/display = Fraunces` variable is stale; every DS text
+// style itself uses National Park.)
+const nationalPark = National_Park({
+  variable: "--font-national-park",
+  weight: "800",
   subsets: ["latin"],
 });
 
@@ -30,7 +32,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${caprasimo.variable} ${publicSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${nationalPark.variable} ${publicSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       {/* suppressHydrationWarning: browser extensions (e.g. ColorZilla's
           cz-shortcut-listen) inject attributes onto <body> before React

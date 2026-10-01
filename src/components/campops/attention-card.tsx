@@ -1,8 +1,9 @@
 import { text } from "@/lib/typography";
 
 /**
- * Shared surface for clarification, unsupported-request, and no-match
- * states (Handoff Spec 2.5 / Figma DS node 2056:160). All three are
+ * Shared surface for clarification, unsupported-request, no-match and
+ * availability-changed states (CampOps DS "Attention Card" — one variant;
+ * the eyebrow text is what distinguishes the reason). All of these are
  * "the agent needs you" moments and get one calm, non-alarming treatment —
  * deliberately not error-colored, and deliberately the same component
  * regardless of which of the three reasons produced it.

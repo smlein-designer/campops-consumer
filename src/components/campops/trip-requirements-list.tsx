@@ -15,7 +15,7 @@ export const TIER_SECTIONS: {
     tier: "flexible",
   },
   { key: "preferences", label: "Preferences", tier: "preference" },
-  { key: "priorities", label: "Priorities", tier: "priority" },
+  { key: "priorities", label: "Relative priorities", tier: "priority" },
 ];
 
 /**
@@ -48,18 +48,18 @@ export function TripRequirementsList({
 }) {
   const derived = getDerivedRequirements(intent);
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-3">
       {TIER_SECTIONS.map(({ key, label, tier }) => {
         const values = intent[key];
         const derivedForTier = derived.filter((d) => d.tier === tier);
         if (!Array.isArray(values)) return null;
         if (values.length === 0 && derivedForTier.length === 0) return null;
         return (
-          <div key={key} className="flex flex-col gap-2">
+          <div key={key} className="flex flex-col gap-1">
             <span className={`${text.labelOverline} text-muted-foreground`}>
               {label}
             </span>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-x-1 gap-y-2">
               {derivedForTier.map((d) => (
                 <RequirementChip key={d.label} label={d.label} tier={d.tier} />
               ))}

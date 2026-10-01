@@ -9,8 +9,8 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-public-sans);
   --font-mono: var(--font-geist-mono);
-  --font-display: var(--font-caprasimo);
-  --font-heading: var(--font-caprasimo);
+  --font-display: var(--font-national-park);
+  --font-heading: var(--font-national-park);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -31,6 +31,12 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-destructive-soft: var(--destructive-soft);
   --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-neutral: var(--neutral);
+  --color-muted-midground: var(--muted-midground);
+  --color-border-hover: var(--border-hover);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -39,6 +45,7 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary-active: var(--primary-active);
+  --color-primary-hover: var(--primary-hover);
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
@@ -52,12 +59,17 @@
   --color-earth: var(--earth);
   --color-earth-tint: var(--earth-tint);
   --color-water: var(--water);
+  --color-water-tint: var(--water-tint);
   --color-sky: var(--sky);
   --color-sky-tint: var(--sky-tint);
 
   /* Requirement tier + neutral-soft (Style Guide: Color — status) */
   --color-neutral-soft: var(--neutral-soft);
   --color-neutral-foreground: var(--neutral-foreground);
+
+  /* Pages v2 compositions with no DS token of their own */
+  --color-surface-fade: var(--surface-fade);
+  --color-scrim: var(--scrim);
 
   /* Fixed radius scale (Handoff Spec 1.5) — overrides shadcn's calc()-derived scale */
   --radius-sm: 4px;
@@ -68,7 +80,9 @@
 }
 
 :root {
-  /* Semantic tokens (Handoff Spec 1.2) */
+  /* Semantic tokens — CampOps Consumer DS file, "Semantic" variable
+     collection (resolved values; the Style Guide page's printed hex labels
+     are stale in places and are NOT the source of truth). */
   --background: #faf8f5; /* page/background — off-white, not stark white */
   --foreground: #111827;
   --card: #ffffff;
@@ -77,22 +91,34 @@
   --popover-foreground: #111827;
   --primary: #4c7a3a; /* trees/default — CTA only */
   --primary-foreground: #ffffff;
-  --primary-active: #2f4f25; /* trees/pressed — hover/pressed + Header border */
+  --primary-hover: #3d6530; /* trees/hover — DS button/primary/background/hover */
+  --primary-active: #2f4f25; /* trees/pressed — Header border */
   --secondary: #f3ece4; /* earth/tint */
   --secondary-foreground: #111827;
   --muted: #f9fafb;
   --muted-foreground: #6b7280;
+  --muted-midground: #374151;
   --accent: #e8f1f6; /* sky/tint */
-  --accent-foreground: #16324a;
-  --destructive: #dc2626; /* Style Guide token; live Authorize/Reservation Review screens' raw fallback shows #b21d1d instead — flagged in docs/implementation-decisions.md, kept the Style Guide value */
+  --accent-foreground: #111827;
+  --destructive: #b21d1d;
   --destructive-foreground: #ffffff;
-  --destructive-soft: #fef2f2; /* Reservation Review's Error Banner / Payment Method Row (Error) background, from live Figma node 35:270 */
-  --success: #16a34a; /* "Availability verified" indicator only — hex not specified in spec, chosen distinct from primary */
+  --destructive-soft: #fef2f2;
+  --warning: #b45309;
+  --warning-soft: #fffbeb;
+  --success: #0c6b52;
+  --success-soft: #f0fdf4;
+  --neutral: #374151;
   --neutral-soft: #f3f4f6; /* Preference-tier chip background, lowest-emphasis UI */
-  --neutral-foreground: #374151;
-  --border: #d1d5db;
-  --input: #d1d5db;
-  --ring: #16324a; /* resolved: uses Water, drawn as an offset ring outside the control */
+  --neutral-foreground: #ffffff;
+  --border: #8994a3;
+  --border-hover: #6b7280;
+  --input: #8994a3;
+  --ring: #1b598e; /* water/default */
+
+  /* Pages v2-only surfaces (no DS token exists for them): the mobile
+     sticky composer bar's fade-out color, and the Your Trip sheet scrim. */
+  --surface-fade: #c9c7c5;
+  --scrim: rgb(26 26 26 / 0.5);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -114,7 +140,8 @@
   --trees-pressed: #2f4f25;
   --earth: #6b4a2f;
   --earth-tint: #f3ece4;
-  --water: #16324a;
+  --water: #1b598e;
+  --water-tint: #dfe8ef;
   --sky: #8fc1de;
   --sky-tint: #e8f1f6;
 }

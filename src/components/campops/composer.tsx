@@ -9,7 +9,9 @@ import { text } from "@/lib/typography";
 export const COMPOSER_INPUT_ID = "campops-composer-input";
 
 /**
- * Persistent input bar (Handoff Spec 2.2 / Figma DS node 2056:6).
+ * Persistent input bar (CampOps DS "Composer" — earth border, 12px radius,
+ * soft 16px shadow). Its placement (in-column on desktop, floating
+ * foreground layer on mobile) is decided by the caller, not here.
  *
  * State rule: Send is the default; swap to Stop only while the agent is
  * actively processing. Never show both simultaneously.
@@ -55,7 +57,7 @@ export const Composer = forwardRef<
 ) {
   return (
     <form
-      className="flex h-[52px] w-full items-center gap-2 rounded-lg border border-border bg-card py-2 pr-2 pl-4 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+      className="flex h-[52px] w-full items-center gap-2 rounded-lg border border-earth bg-card py-2 pr-2 pl-4 shadow-[0_0_16px_rgb(0_0_0/0.25)] focus-within:ring-3 focus-within:ring-ring"
       onSubmit={(e) => {
         e.preventDefault();
         if (!isWorking && !disabled && value.trim()) onSubmit();

@@ -468,3 +468,30 @@ approximation, one badge-copy value) — not silent omissions, and not claimed r
 actually were, which is itself the lesson §14 through §16 all exist to record: a
 deterministic-prerequisite fix isn't verified complete until the exact reproduction is re-run end to
 end and the resulting UI is checked for truthfulness, not just "did it ask a question."
+
+## 18. Consumer visual system and responsive interaction redesign (2026-10-01 addendum)
+
+After this evaluation, the Consumer visual system and responsive interaction model were redesigned
+and implemented from the current CampOps Consumer **Design System** Figma file (tokens, typography,
+and component anatomy/states) and the **Pages v2** Figma file (page composition, responsive layout,
+agent states, and interaction behavior). The visual-fidelity baseline in §10 and the Figma
+divergences in §11 describe the earlier implementation and are **superseded** by the current one.
+
+What changed at a glance — presentation only; trip/domain logic, the model/application boundary,
+and the evaluation scenarios above are unchanged:
+
+- **Tokens and type:** National Park ExtraBold display type; updated DS color tokens (water, border,
+  destructive, success, focus ring, plus new warning/success-soft/water-tint tokens); grayscale
+  photographic workspace background.
+- **Components:** DS Button states (darker hover token, solid water focus ring), DS severity Badge
+  reserved for status, plain pills for descriptive metadata, and DS-aligned Chat Bubble, Requirement
+  Chip, Composer, Attention Card, Candidate Card, and Header.
+- **Layout:** a viewport-bounded desktop workspace with independently scrolling conversation and
+  trip panel; on mobile, one scrolling content plane beneath a floating composer and Your Trip grab
+  bar.
+- **Interaction:** a draggable Your Trip bottom sheet with a progressive scrim and keyboard access;
+  a "trip changed" grab-bar state cleared on viewing; a truthful Working status shown only while a
+  request is in flight; distinct Recommended / Another option / Updated recommendation headings.
+
+Known follow-ups: real-device iOS keyboard and touch-drag testing remains a manual QA item; the
+build reports that no fallback font metrics exist for National Park (cosmetic, accepted).

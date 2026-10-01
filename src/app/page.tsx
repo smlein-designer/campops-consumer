@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Header } from "@/components/campops/header";
+import { Badge, type BadgeSeverity } from "@/components/campops/badge";
 import { CampIllustration } from "@/components/campops/camp-illustration";
 import { Composer } from "@/components/campops/composer";
 import { ChatBubble, ChatRow } from "@/components/campops/chat-bubble";
@@ -99,6 +100,18 @@ type ChatEntry =
     };
 
 type View = "search" | "reservation" | "closing" | "activity";
+
+/** How the currently shown candidate came to be shown — drives only the
+ * Trip Panel's heading/badge ("Recommended for you" vs. "Another option"
+ * vs. "Updated recommendation"), never evaluation itself. */
+type RecommendationOrigin = "initial" | "alternative" | "adapted";
+
+/** Trip-state fingerprint for the mobile Your Trip grab bar's "changed"
+ * state. Excludes `goalStatement`, which the model may simply re-phrase
+ * turn to turn without the trip itself changing. */
+function tripStateKey(intent: TripIntent): string {
+  return JSON.stringify({ ...intent, goalStatement: "" });
+}
 
 // Simulated commit delay for the "authorizing" state (Handoff Spec §5's
 // Pressed/Loading requirement) — purely cosmetic; the resulting state
@@ -231,6 +244,14 @@ export default function Home() {
   // (Trip Details Expanded)" pattern) — desktop never opens this, the same
   // content is always visible there in the persistent Trip Panel.
   const [showTripDetailsSheet, setShowTripDetailsSheet] = useState(false);
+  // The trip state the user last saw in the Your Trip sheet — the collapsed
+  // grab bar turns green ("changed, not yet seen") whenever the live trip
+  // differs from it, and opening the sheet acknowledges the change.
+  const [seenTripKey, setSeenTripKey] = useState(() =>
+    tripStateKey(EMPTY_TRIP_INTENT),
+  );
+  const [recommendationOrigin, setRecommendationOrigin] =
+    useState<RecommendationOrigin>("initial");
   const [reservation, setReservationState] = useState<Reservation | null>(null);
   // Mirrors `reservation` for the timeout callback below, which needs the
   // freshest value without relying on a functional setState updater (which
@@ -276,6 +297,12 @@ export default function Home() {
   // composer becomes focusable again.
   const composerInputRef = useRef<HTMLInputElement>(null);
   const pendingComposerFocusRef = useRef(false);
+  // Bounded-workspace scrolling: the message list (its own scroll region on
+  // desktop), the mobile content plane (the scroll region below lg), and the
+  // message count already brought into view — see the effect that uses them.
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const contentPlaneRef = useRef<HTMLDivElement>(null);
+  const revealedMessageCountRef = useRef(0);
 
   useEffect(() => {
     function cancelPendingFocusIfElsewhere(e: Event) {
@@ -329,49 +356,55 @@ export default function Home() {
   // gates which Candidate Card preserved/compromise chips get a working
   // remove control (design-resolution update, 2026-09-01).
   const hardRequirementsSet = new Set(intent.hardRequirements);
-  // Mobile TripStatusBar's one-line label (Handoff Spec's status badge
-  // sequence: "Working → Waiting for you → Needs attention"). Driven off
-  // real state — the last message's actual kind/type and the real
-  // evaluation result — never a separately-tracked display-only flag.
+  // Trip status (Handoff Spec's sequence "Working → Waiting for you → Needs
+  // attention"), shown in the mobile TripStatusBar and the desktop Trip
+  // Panel's status Badge. Driven off real state only: "Working" appears
+  // strictly while a request is actually in flight (`isWorking`) — never as
+  // an idle default — and otherwise reflects the last message's real
+  // kind/type and the real evaluation result.
   const lastMessage = messages[messages.length - 1];
-  const tripStatusLabel =
-    lastMessage?.kind === "attention" &&
-    (lastMessage.attentionType === "clarification" ||
-      lastMessage.attentionType === "unsupported")
-      ? "Waiting for you"
-      : evaluation?.kind === "no_match"
-        ? "Needs attention"
-        : "Working: Searching campsites";
-  // Trip Panel's own header label — same value on desktop (shown inline)
-  // and used below to build the a11y status announcement, so neither can
-  // drift out of sync with the other.
-  const panelHeaderLabel = !showCandidateCard
-    ? "Your trip"
-    : evaluation?.kind === "full"
-      ? "Recommended for you"
-      : "Closest match";
-  // Panel Header status Badge (Figma DS node 68:489 "Best match" / the
-  // No Match frame's "Needs attention" — found missing during this phase's
-  // visual-fidelity pass; both confirmed via live Figma screenshots, not
-  // guessed). Reuses tripStatusLabel for the no-candidate states so mobile
-  // and desktop never carry two independently-maintained copies of the
-  // same status wording.
-  const panelBadgeLabel = !showCandidateCard
-    ? tripStatusLabel
-    : evaluation?.kind === "full"
-      ? "Best match"
-      : "Closest match";
-  const panelBadgeTone: "primary" | "neutral" =
-    showCandidateCard && evaluation?.kind === "full" ? "primary" : "neutral";
+  const workingLabel = evaluation
+    ? "Working: Updating search"
+    : "Working: Searching campsites";
+  const tripStatus: { label: string; severity: BadgeSeverity } = isWorking
+    ? { label: workingLabel, severity: "neutral" }
+    : evaluation?.kind === "no_match" &&
+        !(
+          lastMessage?.kind === "attention" &&
+          (lastMessage.attentionType === "clarification" ||
+            lastMessage.attentionType === "unsupported")
+        )
+      ? { label: "Needs attention", severity: "advisory" }
+      : { label: "Waiting for you", severity: "neutral" };
+  // Trip Panel heading + status Badge while a candidate is shown (Pages v2:
+  // Recommendation / Alternative / Availability Lost frames). The same
+  // label also feeds the a11y status announcement, so the two can't drift.
+  const candidateHeading: {
+    title: string;
+    badge: string;
+    severity: BadgeSeverity;
+  } =
+    recommendationOrigin === "alternative"
+      ? { title: "Another option", badge: "Alternative", severity: "neutral" }
+      : recommendationOrigin === "adapted"
+        ? {
+            title: "Updated recommendation",
+            badge: "Adapted",
+            severity: "neutral",
+          }
+        : evaluation?.kind === "full"
+          ? { title: "Recommended for you", badge: "Best match", severity: "ready" }
+          : { title: "Closest match", badge: "Closest match", severity: "advisory" };
   // Handoff Spec 3's "status badge changes ... announced via a polite live
   // region, not by moving focus" — mirrors whatever status text is already
-  // visible (isWorking's indicator, the Trip Panel/status-bar label), never
-  // separately-invented copy.
+  // visible, never separately-invented copy.
   const statusAnnouncement = isWorking
-    ? "Working on it…"
+    ? workingLabel
     : showCandidateCard
-      ? panelHeaderLabel
-      : tripStatusLabel;
+      ? candidateHeading.title
+      : tripStatus.label;
+  const tripKey = tripStateKey(intent);
+  const tripChangedUnseen = hasStarted && tripKey !== seenTripKey;
   const canRequestAlternative =
     !!evaluation && candidateIndex + 1 < evaluation.candidates.length;
 
@@ -797,6 +830,7 @@ export default function Home() {
       const result = evaluateCampsites(normalizedIntent, unavailableIds);
       setEvaluation(result);
       setCandidateIndex(0);
+      setRecommendationOrigin("initial");
       pushEvent(deriveRecommendationSelectedEvent(result));
       // Active-Recommendation Follow-Up correction (2026-09-05): only frame
       // this as a refinement acknowledgment when a recommendation already
@@ -868,6 +902,7 @@ export default function Home() {
     const result = evaluateCampsites(widenedIntent, unavailableIds);
     setEvaluation(result);
     setCandidateIndex(0);
+    setRecommendationOrigin("initial");
     pushChat(
       "agent",
       `I widened the search — "${widened}" is now flexible instead of required.`,
@@ -903,6 +938,7 @@ export default function Home() {
     const result = evaluateCampsites(nextIntent, unavailableIds);
     setEvaluation(result);
     setCandidateIndex(0);
+    setRecommendationOrigin("initial");
     pushChat("agent", `Removed "${value}" — no longer treating it as a requirement.`);
     pushEvent(deriveRecommendationSelectedEvent(result));
     announceEvaluation(result);
@@ -938,25 +974,23 @@ export default function Home() {
     const adapted = evaluateCampsites(intent, nextUnavailable);
     setEvaluation(adapted);
     setCandidateIndex(0);
+    setRecommendationOrigin("adapted");
     pushEvent(deriveReplacementSelectedEvent(adapted, 0));
 
     // Availability-loss recovery correction (Search Truth correction,
     // 2026-09-02 — see docs/implementation-decisions.md): the approved
     // design treats this as a dedicated attention/recovery state, not
-    // ordinary chat — reuses the shared AttentionCard (never a new one-off
-    // component), stating the loss and immediately presenting the adapted
-    // pick together, in the same recovery interaction. The adapted
-    // candidate itself is already visible via `evaluation`/`activeCandidate`
-    // in the Trip Panel; this card is the recovery narration.
+    // ordinary chat — the shared AttentionCard states the loss, and the
+    // agent's following message presents the adapted pick (Pages v2
+    // redesign: card + explanation, rather than one combined card), both in
+    // the same recovery interaction. The adapted candidate itself is
+    // already visible via `evaluation`/`activeCandidate` in the Trip Panel.
     const { lossMessage, adaptedMessage } = buildRecoveryMessages(
       lost,
       adapted,
     );
-    pushAttention(
-      "availability_loss",
-      "Availability changed",
-      `${lossMessage} ${adaptedMessage}`,
-    );
+    pushAttention("availability_loss", "Availability changed", lossMessage);
+    pushChat("agent", adaptedMessage);
   }
 
   /**
@@ -1015,7 +1049,15 @@ export default function Home() {
     pushEvent(deriveAlternativeRequestedEvent());
     const nextIndex = candidateIndex + 1;
     setCandidateIndex(nextIndex);
+    setRecommendationOrigin("alternative");
     pushEvent(deriveReplacementSelectedEvent(evaluation, nextIndex));
+    // Conversational acknowledgment of the request (Pages v2 Alternative
+    // frames) — names only the real next candidate, no invented claims.
+    const next = evaluation.candidates[nextIndex].campsite;
+    pushChat(
+      "agent",
+      `Sure — here's another option: ${next.siteName} at ${next.campgroundName}.`,
+    );
   }
 
   function handleReserveAttempt() {
@@ -1104,6 +1146,9 @@ export default function Home() {
     setIntent(EMPTY_TRIP_INTENT);
     setEvaluation(null);
     setCandidateIndex(0);
+    setRecommendationOrigin("initial");
+    setSeenTripKey(tripStateKey(EMPTY_TRIP_INTENT));
+    setShowTripDetailsSheet(false);
     setUnavailableIds(new Set());
     setIsWorking(false);
     setError(null);
@@ -1120,17 +1165,82 @@ export default function Home() {
     setView("search");
   }
 
+  function handleTripSheetOpenChange(open: boolean) {
+    setShowTripDetailsSheet(open);
+    // Opening the sheet — or closing it after, say, removing a chip inside
+    // it — means the user has now seen the current trip state, which clears
+    // the grab bar's green "changed" state.
+    setSeenTripKey(tripKey);
+  }
+
+  // The conversation lives in a bounded scroll region, so newly added
+  // messages must be brought into view explicitly — in whichever direction
+  // they are. They can land below (the usual reply) or ABOVE the viewport
+  // (mobile, after acting on the inline recommendation further down, e.g.
+  // "Show me another option" or the availability-loss trigger). The new
+  // batch's first message is never scrolled past: if the whole batch fits,
+  // it's revealed with its end just clear of the composer; if not, its
+  // start is aligned to the top. Returning from Activity jumps to the end.
+  useEffect(() => {
+    if (view !== "search") {
+      revealedMessageCountRef.current = 0;
+      return;
+    }
+    const list = messageListRef.current;
+    const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
+    const scroller = isDesktop ? list : contentPlaneRef.current;
+    if (!list || !scroller || messages.length === 0) return;
+
+    const firstNewIndex = Math.min(
+      revealedMessageCountRef.current,
+      messages.length - 1,
+    );
+    revealedMessageCountRef.current = messages.length;
+    const first = list.children[firstNewIndex];
+    const last = list.children[messages.length - 1];
+    if (!first || !last) return;
+
+    const GAP = 16;
+    // Mobile: the floating composer + grab bar cover the plane's bottom.
+    const obscuredBottom = isDesktop ? 0 : 140;
+    const view_ = scroller.getBoundingClientRect();
+    const top = view_.top + GAP;
+    const bottom = view_.bottom - obscuredBottom - GAP;
+    const firstTop = first.getBoundingClientRect().top;
+    const lastBottom = last.getBoundingClientRect().bottom;
+
+    let delta = 0;
+    if (lastBottom - firstTop > bottom - top) delta = firstTop - top;
+    else if (firstTop < top) delta = firstTop - top;
+    else if (lastBottom > bottom) delta = lastBottom - bottom;
+    if (delta === 0) return;
+
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    scroller.scrollBy({
+      top: delta,
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, [messages.length, view]);
+
   function renderAttentionActions(
     entry: Extract<ChatEntry, { kind: "attention" }>,
   ) {
+    // Pages v2: attention actions sit in a row on desktop and stack
+    // full-width on mobile.
+    const actionRow =
+      "flex w-full flex-col gap-3 lg:w-auto lg:flex-row lg:flex-wrap lg:items-center";
+    const actionButton = "w-full lg:w-auto";
     if (entry.attentionType === "clarification") {
       if (!entry.quickReplies || entry.quickReplies.length === 0) return null;
       return (
-        <div className="flex flex-wrap items-start gap-3">
+        <div className={actionRow}>
           {entry.quickReplies.map((reply) => (
             <Button
               key={reply.label}
               variant="outline"
+              className={actionButton}
               onClick={() => handleQuickReply(reply)}
             >
               {reply.label}
@@ -1140,18 +1250,22 @@ export default function Home() {
       );
     }
     if (entry.attentionType === "availability_loss") {
-      // Pure narration — no decision required here; Accept/Request
-      // Alternative/etc. for the adapted candidate live in the Trip Panel
-      // as usual, same as any other active recommendation.
+      // Pure narration — no decision required here; Choose/Show me another
+      // option/etc. for the adapted candidate live in the Trip Panel as
+      // usual, same as any other active recommendation.
       return null;
     }
     if (entry.attentionType === "unsupported") {
       return (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={handleContinueUnsupported}>
+        <div className={actionRow}>
+          <Button className={actionButton} onClick={handleContinueUnsupported}>
             Continue with campsite search
           </Button>
-          <Button variant="outline" onClick={handleDecline}>
+          <Button
+            variant="outline"
+            className={actionButton}
+            onClick={handleDecline}
+          >
             Never mind
           </Button>
         </div>
@@ -1159,15 +1273,21 @@ export default function Home() {
     }
     // no_match
     return (
-      <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={handleWidenSearch}>Widen search</Button>
-        <Button variant="outline" onClick={handleChangeRequirement}>
+      <div className={actionRow}>
+        <Button className={actionButton} onClick={handleWidenSearch}>
+          Widen search
+        </Button>
+        <Button
+          variant="outline"
+          className={actionButton}
+          onClick={handleChangeRequirement}
+        >
           Change a requirement
         </Button>
         <button
           type="button"
           onClick={handleDecline}
-          className={`${text.bodySm} cursor-pointer text-water underline`}
+          className={`${text.bodySm} cursor-pointer self-center text-water underline lg:self-auto`}
         >
           No thanks, not right now
         </button>
@@ -1214,15 +1334,20 @@ export default function Home() {
 
   if (view === "closing") {
     return (
-      <div className="flex min-h-screen flex-col bg-background">
+      <div className="flex h-dvh flex-col bg-background">
         <Header onLogoClick={handleStartNewSearch} />
-        <main className="flex flex-1 flex-col items-center gap-6 px-4 pt-16 lg:pt-24">
-          <ChatBubble
-            sender="agent"
-            message={CLOSING_MESSAGE}
-            maxWidthClassName="max-w-[280px] lg:max-w-[480px]"
-          />
-          <Button onClick={handleStartNewSearch}>Start a new search</Button>
+        <main className="relative flex min-h-0 flex-1 flex-col">
+          <CampIllustration />
+          <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-6 py-8">
+            <ChatBubble
+              sender="agent"
+              message={CLOSING_MESSAGE}
+              maxWidthClassName="max-w-full lg:max-w-[480px]"
+            />
+            <Button className="w-full lg:w-auto" onClick={handleStartNewSearch}>
+              Start a new search
+            </Button>
+          </div>
         </main>
       </div>
     );
@@ -1249,40 +1374,122 @@ export default function Home() {
     );
   }
 
+  if (!hasStarted) {
+    return (
+      <div className="flex h-dvh flex-col bg-background">
+        <Header onLogoClick={handleStartNewSearch} />
+        <main className="relative min-h-0 flex-1">
+          <CampIllustration />
+          <div className="absolute inset-0 overflow-y-auto">
+            {/* Pages v2 Start: frosted hero card upper-left, composer low
+                and centered. Viewport-relative spacing, not the 1024px
+                frame's literal offsets. */}
+            <div className="flex min-h-full flex-col px-7 pt-[clamp(24px,14dvh,117px)] pb-8 lg:px-[100px] lg:pt-[clamp(32px,22dvh,209px)] lg:pb-[clamp(32px,18dvh,180px)]">
+              <div className="flex w-full max-w-[663px] flex-col gap-6 rounded-md bg-card/50 p-6 lg:rounded-lg">
+                <h1
+                  className={`${text.displayH1} text-water lg:text-[48px] lg:leading-[1.1]`}
+                >
+                  Your next campsite, without the search grind
+                </h1>
+                <p className={`${text.bodyLg} text-foreground`}>
+                  Tell CampOps about your trip — dates, dealbreakers,
+                  tradeoffs you&rsquo;re willing to make — and let it find the
+                  fit.
+                </p>
+              </div>
+              <div className="min-h-8 flex-1" />
+              <div className="mx-auto flex w-full max-w-[720px] flex-col items-center gap-3">
+                <Composer
+                  ref={composerInputRef}
+                  value={draft}
+                  onChange={setDraft}
+                  onSubmit={handleSubmit}
+                  isWorking={isWorking}
+                />
+                {/* Unobtrusive prototype disclaimer — small, muted, shown
+                    only on the landing screen. */}
+                <p
+                  className={`${text.caption} max-w-[480px] text-center text-muted-foreground`}
+                >
+                  CampOps is a product design prototype. Campground
+                  inventory, availability, pricing, payments, and
+                  reservations are simulated.
+                </p>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const viewActivityLink = (
+    <button
+      type="button"
+      onClick={handleOpenActivity}
+      className={`${text.bodySm} shrink-0 cursor-pointer whitespace-nowrap text-foreground underline ${
+        showCandidateCard && recommendationOrigin !== "alternative"
+          ? "lg:text-muted-foreground"
+          : ""
+      }`}
+    >
+      View activity
+    </button>
+  );
+
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex h-dvh flex-col bg-background">
       <Header onLogoClick={handleStartNewSearch} />
       {/* Handoff Spec 3: status changes are announced via a polite live
-          region rather than by moving focus. Mirrors statusAnnouncement,
-          itself derived from real state (isWorking / the real evaluation
-          result / the last message's real kind) — never fabricated copy. */}
-      {hasStarted && (
-        <div aria-live="polite" className="sr-only">
-          {statusAnnouncement}
-        </div>
+          region rather than by moving focus. */}
+      <div aria-live="polite" className="sr-only">
+        {statusAnnouncement}
+      </div>
+      {/* Mobile-only collapsed trip status (Pages v2 Intent & Search mobile
+          frames) — shown while there's no candidate to present inline. */}
+      {!showCandidateCard && (
+        <TripStatusBar
+          label={tripStatus.label}
+          onViewDetails={() => handleTripSheetOpenChange(true)}
+        />
       )}
-      {/* No padding here — the Trip Panel needs to bleed its own white
-          background (Figma: the panel is pure white/`card`, distinct from
-          the chat column's off-white page background) all the way to this
-          container's edge. Each branch below applies its own padding. */}
-      <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col">
-        {!hasStarted ? (
-          <div className="relative flex flex-1 flex-col items-center justify-start gap-6 overflow-hidden px-4 pt-8 pb-6 text-center lg:gap-8 lg:px-6 lg:pt-20 lg:pb-8">
-            {/* Anchored near the top (the illustration's sky band, per live
-                Figma) rather than vertically centered — centering would
-                land this text across the mountain/ground horizon line,
-                fighting the artwork's own contrast for legibility. */}
-            <CampIllustration />
-            <div className="relative z-10 flex flex-col gap-2">
-              <h1 className={`${text.displayH1} text-foreground`}>
-                Where should we take you?
-              </h1>
-              <p className={`${text.bodyLg} text-foreground`}>
-                Tell CampOps about the trip you have in mind — dates, guests,
-                and what matters to you.
-              </p>
+      {/* Bounded workspace. Desktop: two side-by-side regions that scroll
+          independently (conversation | trip panel), composer pinned to the
+          bottom of the conversation column. Mobile: one scrolling content
+          plane (conversation + inline recommendation); the composer and the
+          Your Trip grab bar float above it as fixed foreground UI, with
+          trailing padding so the last content can scroll clear of them. */}
+      <main className="relative flex min-h-0 flex-1">
+        <CampIllustration />
+        <div
+          ref={contentPlaneRef}
+          className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-36 lg:flex-row lg:overflow-hidden lg:pb-0"
+        >
+          <section className="flex flex-col gap-4 px-6 pt-4 lg:min-h-0 lg:min-w-0 lg:flex-1 lg:p-6">
+            {/* Direct children are exactly the messages, in order — the
+                reveal-on-new-message effect indexes into them. */}
+            <div
+              ref={messageListRef}
+              className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto [&>*]:shrink-0"
+            >
+              {messages.map((m, i) => {
+                const isLatest = i === messages.length - 1;
+                if (m.kind === "chat") {
+                  return (
+                    <ChatRow key={m.id} sender={m.sender}>
+                      <ChatBubble sender={m.sender} message={m.text} />
+                    </ChatRow>
+                  );
+                }
+                return (
+                  <div key={m.id} className="flex flex-col items-start gap-4">
+                    <AttentionCard eyebrow={m.eyebrow} body={m.body} />
+                    {isLatest && renderAttentionActions(m)}
+                  </div>
+                );
+              })}
             </div>
-            <div className="relative z-10 w-full max-w-[560px]">
+            <div className="max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-20 max-lg:h-[126px] max-lg:bg-linear-to-b max-lg:from-surface-fade/0 max-lg:to-surface-fade max-lg:to-50% max-lg:p-4 lg:shrink-0">
               <Composer
                 ref={composerInputRef}
                 value={draft}
@@ -1291,257 +1498,164 @@ export default function Home() {
                 isWorking={isWorking}
               />
             </div>
-            {/* Unobtrusive prototype disclaimer — small, muted, shown only
-                on the initial landing screen (not repeated on every
-                subsequent screen, where it would compete with real trip
-                content). */}
-            <p className={`${text.caption} relative z-10 max-w-[480px] text-muted-foreground`}>
-              CampOps is a product design prototype. Campground inventory,
-              availability, pricing, payments, and reservations are simulated.
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* Mobile-only collapsed trip status (Handoff Spec 4.1's mobile
-                "Working"/"No Match" pattern) — replaces the persistent Trip
-                Panel when there's no active candidate to show inline; opens
-                the same trip state as a bottom sheet instead. Desktop never
-                shows this (TripStatusBar is `lg:hidden` internally). */}
-            {!showCandidateCard && (
-              <TripStatusBar
-                label={tripStatusLabel}
-                onViewDetails={() => setShowTripDetailsSheet(true)}
-              />
-            )}
-            <div className="flex flex-1 flex-col lg:flex-row">
-              {/* Chat column */}
-              <div className="relative flex flex-1 flex-col gap-4 overflow-hidden px-4 py-6 lg:px-6 lg:py-8">
-                <CampIllustration tinted />
-                <div className="relative z-10 flex flex-1 flex-col gap-4">
-                  {messages.map((m, i) => {
-                    const isLatest = i === messages.length - 1;
-                    if (m.kind === "chat") {
-                      return (
-                        <ChatRow key={m.id} sender={m.sender}>
-                          <ChatBubble sender={m.sender} message={m.text} />
-                        </ChatRow>
-                      );
-                    }
-                    return (
-                      <div key={m.id} className="flex flex-col items-start gap-3">
-                        <AttentionCard eyebrow={m.eyebrow} body={m.body} />
-                        {isLatest && renderAttentionActions(m)}
-                      </div>
-                    );
-                  })}
-                  {isWorking && (
-                    <ChatRow sender="agent">
-                      <ChatBubble sender="agent" message="Working on it…" />
-                    </ChatRow>
-                  )}
-                </div>
-                <div className="relative z-10">
-                  <Composer
-                    ref={composerInputRef}
-                    value={draft}
-                    onChange={setDraft}
-                    onSubmit={handleSubmit}
-                    isWorking={isWorking}
-                  />
-                </div>
-              </div>
+          </section>
 
-              {/* Trip panel — persistent side column at lg+; below lg,
-                  content here is shown only while a candidate card is
-                  active (Recommendation/Compromise), matching the mobile
-                  designs where that state reflows inline instead of behind
-                  the collapsed status bar/sheet. Pure white (`bg-card`) at
-                  lg+ only — Figma's panel is white against the chat
-                  column's off-white background; mobile stays on the page
-                  background since it's one continuous scroll there, not a
-                  separate surface. */}
-              <div className="w-full px-4 py-6 lg:w-[420px] lg:shrink-0 lg:border-l lg:border-border lg:bg-card lg:py-8 lg:pr-6 lg:pl-8">
-                <div
-                  className={`mb-4 items-center justify-between ${
-                    showCandidateCard ? "flex" : "hidden lg:flex"
-                  }`}
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <p className={`${text.labelLg} truncate text-card-foreground`}>
-                      {panelHeaderLabel}
-                    </p>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 ${text.caption} font-semibold ${
-                        panelBadgeTone === "primary"
-                          ? "bg-primary text-primary-foreground"
-                          : "border border-border bg-card text-card-foreground"
+          {/* Trip Panel — persistent translucent column at lg+. Below lg its
+              content appears inline (after the conversation) only while a
+              candidate is shown; otherwise the same trip state lives in the
+              Your Trip sheet. One width for every state so the composer
+              never shifts when a recommendation arrives. */}
+          <aside
+            className={`flex flex-col px-6 pb-6 lg:w-[clamp(400px,39vw,560px)] lg:shrink-0 lg:overflow-y-auto lg:bg-card/50 lg:p-6 [&>*]:shrink-0 ${
+              showCandidateCard ? "gap-4 pt-4 lg:pt-6" : "gap-3"
+            } ${showCandidateCard || error ? "" : "max-lg:hidden"}`}
+          >
+            {showCandidateCard && activeCandidate ? (
+              <>
+                {/* Panel Header — mobile stacks title over badge; desktop
+                    spreads title · badge · link across one row. */}
+                <div className="flex items-start justify-between gap-4 lg:items-center">
+                  <div className="flex flex-col items-start gap-1 lg:contents">
+                    <h2
+                      className={`${text.labelLg} text-card-foreground ${
+                        recommendationOrigin === "alternative"
+                          ? "lg:font-display lg:text-[32px] lg:leading-[1.25] lg:font-extrabold"
+                          : ""
                       }`}
                     >
-                      {panelBadgeLabel}
-                    </span>
+                      {candidateHeading.title}
+                    </h2>
+                    <Badge
+                      label={isWorking ? workingLabel : candidateHeading.badge}
+                      severity={isWorking ? "neutral" : candidateHeading.severity}
+                    />
                   </div>
+                  {viewActivityLink}
+                </div>
+
+                {/* Real, deterministic fact (Figma's "Verified Row"): this
+                    candidate passed evaluateCampsites' availability checks
+                    moments ago — including a date-specific check whenever
+                    concrete dates exist (Dataset Depth correction,
+                    2026-09-04). For an exploratory recommendation (no dates
+                    yet) it reflects only the static `available` flag —
+                    see docs/implementation-decisions.md. */}
+                <div className="flex items-center gap-1">
+                  <span className="size-1.5 shrink-0 rounded-full bg-success" />
+                  <span className={`${text.caption} text-success`}>
+                    Availability verified just now
+                  </span>
+                </div>
+                {evaluation?.kind === "compromise" && (
+                  <p className={`${text.bodySm} text-muted-foreground`}>
+                    No exact match — here&rsquo;s the closest option, with
+                    what I couldn&rsquo;t confirm flagged below.
+                  </p>
+                )}
+                <CandidateCard
+                  location={activeCandidate.campsite.campgroundName}
+                  siteName={activeCandidate.campsite.siteName}
+                  siteType={activeCandidate.campsite.siteType}
+                  capacityValue={`${activeCandidate.campsite.capacity} guests`}
+                  distanceValue={
+                    // Dataset Depth correction (2026-09-04): derived from the
+                    // trip's real originZip, never a campsite-side static
+                    // fact — honestly absent when no origin ZIP is known.
+                    activeCandidate.distanceFromOriginMiles !== null
+                      ? `${activeCandidate.distanceFromOriginMiles} mi`
+                      : "Not available"
+                  }
+                  datesValue={
+                    // The user's own requested dates, never the campsite's
+                    // inventory-side `datesAvailable` — and honestly "Not
+                    // yet set" for an exploratory recommendation.
+                    intent.checkIn && intent.checkOut
+                      ? `${intent.checkIn} – ${intent.checkOut}`
+                      : "Not yet set"
+                  }
+                  priceValue={`$${activeCandidate.campsite.pricePerNight}/night`}
+                  amenities={activeCandidate.campsite.amenities.map(
+                    (code) => AMENITY_LABELS[code],
+                  )}
+                  preserved={activeCandidate.preserved}
+                  compromises={activeCandidate.compromises}
+                  explanation={activeCandidate.explanation}
+                  removableHardLabels={hardRequirementsSet}
+                  onRemoveRequirement={(label) =>
+                    handleRemoveRequirement("hardRequirements", label)
+                  }
+                />
+
+                <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+                  <Button className="w-full lg:w-auto" onClick={handleAccept}>
+                    Choose {activeCandidate.campsite.siteName}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full lg:w-auto"
+                    onClick={handleRequestAlternative}
+                    disabled={!canRequestAlternative}
+                  >
+                    Show me another option
+                  </Button>
                   <button
                     type="button"
-                    onClick={handleOpenActivity}
-                    className={`${text.bodySm} shrink-0 cursor-pointer text-muted-foreground underline`}
+                    onClick={handleRejectCandidate}
+                    className={`${text.bodySm} cursor-pointer self-center whitespace-nowrap text-foreground underline lg:self-auto lg:text-muted-foreground`}
                   >
-                    View activity
+                    No thanks, I&rsquo;ll pass
                   </button>
                 </div>
-
-                {intent.goalStatement && (
-                  <p
-                    className={`${text.bodySm} mb-6 text-muted-foreground ${
-                      showCandidateCard ? "" : "hidden lg:block"
-                    }`}
-                  >
-                    {intent.goalStatement}
-                  </p>
-                )}
-
-                {error && (
-                  <p className={`${text.bodySm} mb-4 text-destructive`}>
-                    {error}
-                  </p>
-                )}
-
-                {showCandidateCard && activeCandidate ? (
-                <>
-                  {/* Real, deterministic fact (Figma's "Verified Row"): this
-                      candidate passed evaluateCampsites' own site.available
-                      check moments ago — not a fabricated claim, and never
-                      shown for a no_match state where nothing was actually
-                      confirmed available.
-
-                      Previously flagged, now genuinely resolved (Dataset
-                      Depth correction, 2026-09-04 — see
-                      docs/implementation-decisions.md): this POC used to
-                      have NO date-specific availability check at all
-                      (`site.available` never depended on `checkIn`/
-                      `checkOut`), so "verified" risked reading as
-                      "verified for my dates" when it wasn't. Campsites now
-                      carry real `unavailableRanges`, and evaluateCampsites
-                      adds a genuine "Available for your dates" hard check
-                      whenever concrete, resolvable dates exist — which an
-                      availability-backed recommendation always has by the
-                      time it reaches this screen (the search-prerequisite
-                      gate requires it). The one remaining honest nuance:
-                      an EXPLORATORY recommendation (no dates yet) still
-                      shows this same indicator, and for that case it still
-                      only reflects the static `available` flag, not a
-                      date-specific check — there is nothing to check
-                      against yet. */}
-                  <div className="mb-4 flex items-center gap-1.5">
-                    <span className="size-1.5 shrink-0 rounded-full bg-success" />
-                    <span className={`${text.bodySm} text-muted-foreground`}>
-                      Availability verified just now
-                    </span>
-                  </div>
-                  {evaluation?.kind === "compromise" && (
-                    <p className={`${text.bodySm} mb-4 text-muted-foreground`}>
-                      No exact match — here&rsquo;s the closest option, with
-                      what I couldn&rsquo;t confirm flagged below.
-                    </p>
-                  )}
-                  <CandidateCard
-                    location={activeCandidate.campsite.campgroundName}
-                    siteName={activeCandidate.campsite.siteName}
-                    siteType={activeCandidate.campsite.siteType}
-                    capacityValue={`${activeCandidate.campsite.capacity} guests`}
-                    distanceValue={
-                      // Dataset Depth correction (2026-09-04): the ONLY
-                      // distance value this app ever shows — derived from
-                      // the trip's real originZip, never a campsite-side
-                      // static fact. Honestly absent (never a fabricated
-                      // number) when no origin ZIP is known.
-                      activeCandidate.distanceFromOriginMiles !== null
-                        ? `${activeCandidate.distanceFromOriginMiles} mi`
-                        : "Not available"
-                    }
-                    datesValue={
-                      // The user's own requested dates, never the
-                      // campsite's fixed inventory-side `datesAvailable`
-                      // (Deterministic Search-Date Prerequisites
-                      // correction, 2026-09-01) — for an availability-
-                      // backed recommendation these are guaranteed present
-                      // by the search gate above; for an exploratory
-                      // recommendation (dates optional) there may
-                      // genuinely be none yet, and that must read as
-                      // exactly that, never a fabricated date range.
-                      intent.checkIn && intent.checkOut
-                        ? `${intent.checkIn} – ${intent.checkOut}`
-                        : "Not yet set"
-                    }
-                    priceValue={`$${activeCandidate.campsite.pricePerNight}/night`}
-                    amenities={activeCandidate.campsite.amenities.map(
-                      (code) => AMENITY_LABELS[code],
-                    )}
-                    preserved={activeCandidate.preserved}
-                    compromises={activeCandidate.compromises}
-                    explanation={activeCandidate.explanation}
-                    removableHardLabels={hardRequirementsSet}
-                    onRemoveRequirement={(label) =>
-                      handleRemoveRequirement("hardRequirements", label)
-                    }
+                {/* Scripted demo control (Build Brief §13) — not a designed
+                    screen element, a deterministic exception trigger for
+                    verifying availability-loss recovery. */}
+                <button
+                  type="button"
+                  onClick={handleSimulateAvailabilityLoss}
+                  className={`${text.caption} cursor-pointer self-start text-muted-foreground underline`}
+                >
+                  Simulate: this site just became unavailable
+                </button>
+              </>
+            ) : (
+              // Below lg this content lives in the Your Trip sheet instead
+              // (same TripRequirementsList, same onRemove).
+              <div className="hidden lg:contents">
+                <div className="flex items-center justify-between gap-4">
+                  <h2 className={`${text.displayH2} text-card-foreground`}>
+                    Your trip
+                  </h2>
+                  <Badge
+                    label={tripStatus.label}
+                    severity={tripStatus.severity}
                   />
-
-                  <div className="mt-4 flex flex-col gap-3">
-                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-                      <Button className="w-full lg:w-auto" onClick={handleAccept}>
-                        Accept
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="w-full lg:w-auto"
-                        onClick={handleRequestAlternative}
-                        disabled={!canRequestAlternative}
-                      >
-                        Request Alternative
-                      </Button>
-                      <Button
-                        variant="link"
-                        className="w-full lg:w-auto"
-                        onClick={handleRejectCandidate}
-                      >
-                        No thanks, I&rsquo;ll pass
-                      </Button>
-                    </div>
-                    {/* Scripted demo control (Build Brief §13) — not a designed
-                        screen element, a deterministic exception trigger for
-                        verifying availability-loss recovery. */}
-                    <button
-                      type="button"
-                      onClick={handleSimulateAvailabilityLoss}
-                      className={`${text.caption} cursor-pointer self-start text-muted-foreground underline`}
-                    >
-                      Simulate: this site just became unavailable
-                    </button>
-                  </div>
-                </>
-              ) : (
-                // Below lg, this content lives in TripDetailsSheet instead
-                // (opened via TripStatusBar's "View details") — same
-                // TripRequirementsList component, same onRemove, just a
-                // different affordance for reaching it on a small screen.
-                <div className="hidden lg:flex lg:flex-col lg:gap-6">
-                  <TripRequirementsList
-                    intent={intent}
-                    onRemove={handleRemoveRequirement}
-                  />
+                  {viewActivityLink}
                 </div>
-              )}
+                {intent.goalStatement && (
+                  <p className="font-sans text-[18px] leading-[1.45] text-muted-foreground">
+                    &ldquo;{intent.goalStatement}&rdquo;
+                  </p>
+                )}
+                <TripRequirementsList
+                  intent={intent}
+                  onRemove={handleRemoveRequirement}
+                />
               </div>
-            </div>
-            <TripDetailsSheet
-              open={showTripDetailsSheet}
-              onOpenChange={setShowTripDetailsSheet}
-              intent={intent}
-              onRemove={handleRemoveRequirement}
-              onViewActivity={handleOpenActivity}
-            />
-          </>
-        )}
+            )}
+            {error && (
+              <p className={`${text.bodySm} text-destructive`}>{error}</p>
+            )}
+          </aside>
+        </div>
       </main>
+      <TripDetailsSheet
+        open={showTripDetailsSheet}
+        onOpenChange={handleTripSheetOpenChange}
+        changed={tripChangedUnseen}
+        intent={intent}
+        onRemove={handleRemoveRequirement}
+        onViewActivity={handleOpenActivity}
+      />
     </div>
   );
 }

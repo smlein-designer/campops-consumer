@@ -5,15 +5,16 @@ import type { RequirementTier } from "@/lib/schemas";
 export type { RequirementTier };
 
 const TIER_STYLES: Record<RequirementTier, string> = {
-  hard: "bg-earth text-primary-foreground",
-  flexible: "bg-sky-tint text-water",
-  preference: "bg-neutral-soft text-neutral-foreground",
-  priority: "bg-water text-primary-foreground",
+  hard: "border-earth bg-earth-tint text-earth",
+  flexible: "border-border bg-sky-tint text-water",
+  preference: "border-border bg-neutral-soft text-foreground",
+  priority: "border-water bg-water-tint text-water",
 };
 
 /**
- * Removable chip for a single trip requirement (Handoff Spec 2.4 / Figma DS
- * node 2056:135). Tier color meaning (Case Study Decision 13):
+ * Removable chip for a single trip requirement (CampOps DS "Requirement
+ * Chip", Tier = Hard | Flexible | Preference | Priority — tinted fill,
+ * 0.5px tier border, 12px radius). Tier color meaning (Case Study Decision 13):
  * Hard = earth (non-negotiable) · Flexible = sky (can shift) ·
  * Preference = neutral (quietest tier) · Priority = water (requires weighing
  * a tradeoff).
@@ -40,7 +41,7 @@ export function RequirementChip({
 }) {
   return (
     <div
-      className={`flex items-center gap-1 rounded-full px-2 py-1 ${TIER_STYLES[tier]}`}
+      className={`flex items-center gap-1 rounded-lg border-[0.5px] px-2 py-1 ${TIER_STYLES[tier]}`}
     >
       <span className={text.labelSm}>{label}</span>
       {onRemove ? (

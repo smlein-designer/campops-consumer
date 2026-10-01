@@ -80,28 +80,24 @@ export function Header({ onLogoClick }: { onLogoClick?: () => void }) {
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 hidden h-full w-full object-cover object-bottom lg:block"
       />
-      <div className="relative z-10 flex items-center gap-3 lg:hidden">
-        <button
-          type="button"
-          aria-label="Menu"
-          disabled
-          className="flex size-8 items-center justify-center text-primary-foreground opacity-80"
-        >
-          <Menu className="size-5" />
-        </button>
-        <Logo
-          className={`${text.displayH3} whitespace-nowrap text-primary-foreground`}
-          onLogoClick={onLogoClick}
-        />
-      </div>
-      <div
-        className={`${text.displayH3} relative z-10 hidden items-center gap-8 whitespace-nowrap text-primary-foreground lg:flex`}
+      {/* DS Header, Mobile: menu · logo · avatar spread edge to edge (the
+          logo lands centered); Desktop: logo + nav grouped left, avatar right. */}
+      <button
+        type="button"
+        aria-label="Menu"
+        disabled
+        className="relative z-10 flex size-6 items-center justify-center text-primary-foreground lg:hidden"
       >
-        <Logo className="whitespace-nowrap" onLogoClick={onLogoClick} />
-        <p className={text.labelMd}>Explore</p>
-        <p className={text.labelMd}>My Trips</p>
+        <Menu className="size-6" />
+      </button>
+      <div className="relative z-10 flex items-center gap-8 whitespace-nowrap text-primary-foreground">
+        <Logo className={text.displayH3} onLogoClick={onLogoClick} />
+        <p className={`${text.labelMd} hidden lg:block`}>Explore</p>
+        <p className={`${text.labelMd} hidden lg:block`}>My Trips</p>
       </div>
-      <div className="relative z-10 flex size-[40px] shrink-0 items-center justify-center rounded-full border-2 border-sky p-1">
+      {/* Avatar Ring: 2px sky ring drawn outside a 4px gap — 32px ring /
+          24px avatar on mobile, 40px / 32px on desktop. */}
+      <div className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full p-1 ring-2 ring-sky ring-inset lg:size-10">
         <div className="size-full rounded-full bg-muted-foreground" />
       </div>
     </header>

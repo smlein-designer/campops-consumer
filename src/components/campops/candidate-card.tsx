@@ -1,6 +1,7 @@
-import { Banknote, CalendarDays, MapPin, Users } from "lucide-react";
+import { Banknote, Calendars, MapPin, Users } from "lucide-react";
 import { text } from "@/lib/typography";
 import { RequirementChip } from "@/components/campops/requirement-chip";
+import { Pill } from "@/components/campops/badge";
 import { rawRequirementLabel } from "@/lib/requirements";
 
 function Fact({
@@ -26,12 +27,16 @@ function Fact({
 }
 
 /**
- * Rich candidate presentation card (Handoff Spec 2.7 / Figma DS node 2085:6).
+ * Rich candidate presentation card (CampOps DS "Candidate Card").
  *
- * The photo carousel/lightbox affordance is a static illustrative placeholder
- * in the design — "the design specifies the affordance, not the interaction
- * logic" — so this slice renders the static photo indicators without real
- * carousel/lightbox behavior.
+ * Photo: the POC dataset has no per-site photography, so every site shows
+ * the same stand-in image with an honest "1 / 1" counter. The DS card's
+ * carousel dots and expand (lightbox) button are deliberately omitted —
+ * with a single image there is nothing to page through, and no expansion
+ * behavior exists to back an expand affordance.
+ *
+ * The fact row and "How this fits" chips wrap rather than clip (the DS
+ * master uses single non-wrapping rows; Pages v2 mobile wraps the facts).
  *
  * Preserved/Compromise chip removal (design-resolution update, 2026-09-01):
  * direct-manipulation chip removal is now available here too, not only on
@@ -80,9 +85,15 @@ export function CandidateCard({
     return () => onRemoveRequirement(raw);
   }
   return (
-    <div className="flex w-full max-w-[460px] flex-col items-start gap-4 rounded-md border border-border bg-card">
-      {/* Photo — illustrative placeholder, no real photo assets in the POC dataset */}
-      <div className="relative h-[180px] w-full shrink-0 overflow-hidden rounded-t-md bg-gradient-to-b from-sky-tint to-earth-tint">
+    <div className="flex w-full shrink-0 flex-col items-start gap-4 overflow-hidden rounded-md border border-border bg-card">
+      <div className="relative h-[180px] w-full shrink-0 bg-muted">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static
+            stand-in photo shared by every site (see doc comment above). */}
+        <img
+          src="/assets/campsite-placeholder.jpg"
+          alt=""
+          className="absolute inset-0 size-full object-cover"
+        />
         <div className="absolute top-3 left-3 rounded-[10px] bg-black/45 px-2.5 py-1 text-xs font-medium text-white">
           1 / 1
         </div>
@@ -90,19 +101,17 @@ export function CandidateCard({
 
       <div className="flex w-full shrink-0 flex-col items-start gap-4 px-6 pb-6">
         <div className="flex items-center gap-1">
-          <MapPin className="size-4 text-muted-foreground" />
+          <MapPin className="size-4 shrink-0 text-muted-foreground" />
           <p className={`${text.bodySm} text-muted-foreground`}>{location}</p>
         </div>
 
         <div className="flex w-full items-center justify-between gap-2">
           <p
-            className={`${text.labelLg} min-w-0 truncate text-card-foreground`}
+            className={`${text.headingH4} min-w-0 truncate text-card-foreground`}
           >
             {siteName}
           </p>
-          <div className="shrink-0 rounded-full bg-secondary px-2 py-0.5">
-            <span className={`${text.caption} font-semibold`}>{siteType}</span>
-          </div>
+          <Pill label={siteType} variant="secondary" />
         </div>
 
         <div className="flex w-full flex-wrap items-start justify-between gap-x-4 gap-y-3">
@@ -117,7 +126,7 @@ export function CandidateCard({
             value={distanceValue}
           />
           <Fact
-            icon={<CalendarDays className="size-4 text-muted-foreground" />}
+            icon={<Calendars className="size-4 text-muted-foreground" />}
             label="Dates"
             value={datesValue}
           />
@@ -134,16 +143,9 @@ export function CandidateCard({
           <span className={`${text.labelOverline} text-muted-foreground`}>
             Amenities
           </span>
-          <div className="flex flex-wrap items-start gap-1">
+          <div className="flex flex-wrap items-start gap-x-1 gap-y-2">
             {amenities.map((amenity) => (
-              <div
-                key={amenity}
-                className="rounded-full border border-border bg-card px-2 py-0.5"
-              >
-                <span className={`${text.caption} font-semibold`}>
-                  {amenity}
-                </span>
-              </div>
+              <Pill key={amenity} label={amenity} variant="outline" />
             ))}
           </div>
         </div>
@@ -154,7 +156,7 @@ export function CandidateCard({
           <span className={`${text.labelOverline} text-muted-foreground`}>
             How this fits
           </span>
-          <div className="flex flex-wrap items-start gap-1">
+          <div className="flex flex-wrap items-start gap-x-1 gap-y-2">
             {preserved.map((label) => (
               <RequirementChip
                 key={label}

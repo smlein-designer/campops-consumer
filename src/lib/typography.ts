@@ -5,11 +5,11 @@
  * the numbers."
  */
 export const text = {
-  displayHero: "font-display text-[48px] leading-[1.2]",
-  displayH1: "font-display text-[40px] leading-[1.2]",
-  displayH2: "font-display text-[32px] leading-[1.25]",
-  displayH3: "font-display text-[24px] leading-[1.3]",
-  headingH4: "font-display text-[18px] leading-[1.35]",
+  displayHero: "font-display font-extrabold text-[48px] leading-[1.1]",
+  displayH1: "font-display font-extrabold text-[40px] leading-[1.2]",
+  displayH2: "font-display font-extrabold text-[32px] leading-[1.25]",
+  displayH3: "font-display font-extrabold text-[24px] leading-[1.3]",
+  headingH4: "font-display font-extrabold text-[18px] leading-[1.35]",
   bodyLg: "font-sans text-[18px] leading-[1.5] font-normal",
   bodyBase: "font-sans text-[16px] leading-[1.5] font-normal",
   bodySm: "font-sans text-[14px] leading-[1.45] font-normal",

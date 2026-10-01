@@ -42,10 +42,13 @@ run("Some records have genuine date-specific unavailable windows", () => {
 const TEST_SITE_ID = "lakeview-11";
 
 run("The same site is available for one date range and unavailable for another", () => {
+  // Explicit year: a yearless "Sept 5" rolls forward to the NEXT Sept 5
+  // once that date has passed (resolveToISODate's "soonest future" rule),
+  // which stopped overlapping the 2026 fixture after early September 2026.
   const unavailableWindow: TripIntent = {
     ...EMPTY_TRIP_INTENT,
-    checkIn: "Sept 5",
-    checkOut: "Sept 7",
+    checkIn: "Sept 5, 2026",
+    checkOut: "Sept 7, 2026",
   };
   const availableWindow: TripIntent = {
     ...EMPTY_TRIP_INTENT,

@@ -1,27 +1,8 @@
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/campops/badge";
 import { SummaryRow } from "@/components/campops/summary-row";
 import { text } from "@/lib/typography";
 import type { Reservation } from "@/lib/schemas";
-
-function Badge({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: "neutral" | "reserved";
-}) {
-  return (
-    <div
-      className={`shrink-0 rounded-full px-2 py-0.5 ${
-        tone === "reserved"
-          ? "bg-primary text-primary-foreground"
-          : "bg-neutral-soft text-foreground"
-      }`}
-    >
-      <span className={`${text.caption} font-semibold`}>{label}</span>
-    </div>
-  );
-}
 
 /**
  * Reservation Review / Missing Info / Booking Confirmed (Handoff Spec 4.3,
@@ -80,7 +61,7 @@ export function ReservationReview({
           <p className={`${text.displayH3} text-foreground`}>
             You&rsquo;re all set
           </p>
-          <Badge label="Reserved" tone="reserved" />
+          <Badge label="Reserved" severity="ready" />
         </div>
         <p className={`${text.bodySm} text-muted-foreground`}>
           Your reservation is confirmed and your payment method was charged $
@@ -127,7 +108,7 @@ export function ReservationReview({
         <p className={`${text.displayH3} text-foreground`}>
           Review your reservation
         </p>
-        <Badge label="Staged · Not yet booked" tone="neutral" />
+        <Badge label="Staged · Not yet booked" severity="neutral" />
       </div>
 
       {/* Required Handoff Spec line — persistent, not conditional. */}
