@@ -409,37 +409,38 @@ export type EvaluationResult = {
  * This is real structured state, not chat text: the reservation the user
  * sees is always read from this object, never re-derived from conversation.
  *
- * Status is a five-value state, deliberately not collapsed into one or two
- * booleans (each has distinct meaning and distinct allowed transitions —
- * see `transitionReservation` in `src/lib/reservation.ts`, the ONLY
- * function permitted to change `status`):
- * - "staged": accepted and prepared, resting state on Reservation Review.
- * - "incomplete": a reserve attempt found required info missing (surfaces
- *   the Missing Info treatment); staged data is preserved, not discarded.
- * - "ready_for_authorization": required info is complete; the Authorize
- *   Booking dialog is open, awaiting the user's explicit decision.
- * - "authorizing": the user has clicked the dialog's own commit action; a
- *   brief, deterministic simulated-commit state (Handoff Spec 5's
- *   "Pressed/Loading" requirement) — not yet reserved.
- * - "reserved": the explicit AUTHORIZE event has resolved. This is the
- *   ONLY status that represents a committed, charged booking.
+ * Status is a five-value state, deliberately not collapsed into booleans
+ * (each has distinct meaning and allowed transitions — see
+ * `transitionReservation` in `src/lib/reservation.ts`, the ONLY function
+ * permitted to change `status`). Every reservation starts COMPLETE: party
+ * size and dates are conversational prerequisites resolved before staging
+ * (`checkBookingPrerequisites`), so there is no "missing info" state.
+ * - "staged": Reservation Review — nothing charged or booked.
+ * - "adding_payment": Add payment — the transactional prerequisite, entered
+ *   from Review only when no payment method exists yet.
+ * - "ready_for_authorization": Confirm your reservation — complete details
+ *   and charge shown, awaiting the user's explicit authorization.
+ * - "authorizing": Processing payment — the asynchronous step between
+ *   authorization and confirmation; not yet reserved.
+ * - "reserved": the explicit AUTHORIZE event has resolved — the ONLY status
+ *   that represents a committed, charged booking.
  */
 export type ReservationStatus =
   | "staged"
-  | "incomplete"
+  | "adding_payment"
   | "ready_for_authorization"
   | "authorizing"
   | "reserved";
 
 export type Reservation = {
   campsite: Campsite;
-  /** From TripIntent at staging time — may be null if the user never stated a headcount. */
-  guestCount: number | null;
+  /** From TripIntent at staging time — always known (a conversational prerequisite of staging). */
+  guestCount: number;
   /**
    * The user's own stated check-in/check-out (TripIntent.checkIn/checkOut at
    * staging time) — deterministically REQUIRED to be non-null AND resolvable
    * to a real, positive-night date range before staging can occur at all
-   * (see `checkBookingDatePrerequisites` in `src/lib/prerequisites.ts`).
+   * (see `checkBookingPrerequisites` in `src/lib/prerequisites.ts`).
    * `nights` (and therefore `total`) is DERIVED from this pair via
    * `computeDateRange` (`src/lib/dates.ts`) at staging time — never sourced
    * from the campsite record, which (Dataset Depth correction, 2026-09-04)
@@ -456,7 +457,7 @@ export type Reservation = {
   total: number;
   /** Pre-formatted display copy, generated once at staging time from the campsite's structured `CancellationPolicy` + the real check-in date (see `describeCancellationPolicy`). */
   cancellationPolicy: string;
-  /** null = no payment method on file yet — the one required field the live Figma actually models as missing. */
+  /** null = no payment method on file yet — Review routes to Add payment before Confirm until it is set. */
   paymentMethodLabel: string | null;
   status: ReservationStatus;
   /** Set only by a successful AUTHORIZE transition; deterministic, never random. */
@@ -464,8 +465,10 @@ export type Reservation = {
 };
 
 export type ReservationEvent =
-  | { type: "RESERVE_ATTEMPT" }
+  | { type: "BEGIN_ADD_PAYMENT" }
+  | { type: "CANCEL_ADD_PAYMENT" }
   | { type: "ADD_PAYMENT_METHOD"; label: string }
+  | { type: "CONTINUE_TO_CONFIRMATION" }
   | { type: "BEGIN_AUTHORIZE" }
   | { type: "AUTHORIZE" }
   | { type: "CANCEL_AUTHORIZATION" };
@@ -480,8 +483,9 @@ export type ReservationEvent =
  * never reconstructed by parsing chat messages.
  *
  * `actor` is a real three-way distinction, not a convenience boolean:
- * - "user": something the person explicitly did (accept, reject, request
- *   alternative, authorize).
+ * - "user": something the person explicitly did — describing or changing
+ *   their trip, answering a question, accepting, rejecting, requesting an
+ *   alternative, adding payment, authorizing.
  * - "agent": CampOps' own interpretive/evaluative work (extracting intent,
  *   ranking candidates, staging a reservation).
  * - "system": a deterministic app/tool state change that isn't really a
@@ -515,11 +519,15 @@ export type EventType =
   | "candidate_excluded"
   | "replacement_selected"
   | "alternative_requested"
+  | "first_option_requested"
   | "recommendation_accepted"
   | "recommendation_rejected"
   | "reservation_staged"
+  | "reservation_cancelled"
+  | "trip_edit_requested"
+  | "payment_entry_started"
+  | "payment_entry_dismissed"
   | "payment_method_added"
-  | "missing_info_detected"
   | "authorization_presented"
   | "authorization_dismissed"
   | "authorization_initiated"

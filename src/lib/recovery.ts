@@ -78,11 +78,17 @@ function describeChange(lost: Candidate, adapted: Candidate): string {
  * the adapted pick (or the honest lack of one) — never split across a
  * user turn.
  */
+/** The loss itself — known the moment availability changes, before any
+ * replacement has been found. */
+export function buildLossMessage(lost: Candidate): string {
+  return `${lost.campsite.siteName} at ${lost.campsite.campgroundName} just became unavailable.`;
+}
+
 export function buildRecoveryMessages(
   lost: Candidate,
   adapted: EvaluationResult,
 ): { lossMessage: string; adaptedMessage: string } {
-  const lossMessage = `${lost.campsite.siteName} at ${lost.campsite.campgroundName} just became unavailable.`;
+  const lossMessage = buildLossMessage(lost);
 
   const top = adapted.candidates[0];
   if (adapted.kind === "full" && top) {

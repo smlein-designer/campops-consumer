@@ -1,3 +1,4 @@
+import { newId } from "@/lib/id";
 import { CAMPSITES } from "@/lib/campsites";
 import { questionFor, type PrerequisiteKind } from "@/lib/prerequisites";
 import type {
@@ -28,7 +29,7 @@ function makeEvent(
   },
 ): TaskEvent {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     type,
     actor,
     description,
@@ -46,7 +47,8 @@ function candidateLabel(c: Candidate): string {
  * per task (the first time intent has real content), "requirement_refined"
  * for any later genuine change, and nothing when intent didn't actually
  * change — never inferred from field counts, driven by a real before/after
- * comparison.
+ * comparison. Actor is "user": the person describes and changes their own
+ * trip through the conversation — CampOps only interprets it.
  */
 export function deriveIntentEvent(
   before: TripIntent,
@@ -59,14 +61,14 @@ export function deriveIntentEvent(
     const summary = after.goalStatement || "a new camping trip";
     return makeEvent(
       "trip_established",
-      "agent",
+      "user",
       `Started a new trip: ${summary}`,
     );
   }
   return makeEvent(
     "requirement_refined",
-    "agent",
-    "Updated trip requirements.",
+    "user",
+    "Changed the trip requirements.",
   );
 }
 
@@ -77,15 +79,15 @@ export function deriveClarificationRequestedEvent(question: string): TaskEvent {
 export function deriveClarificationResolvedEvent(): TaskEvent {
   return makeEvent(
     "clarification_resolved",
-    "agent",
-    "Continued after clarification.",
+    "user",
+    "Answered CampOps' question.",
   );
 }
 
 export function deriveUnsupportedEvent(): TaskEvent {
   return makeEvent(
     "unsupported_encountered",
-    "agent",
+    "user",
     "Asked about something outside campsite booking.",
   );
 }
@@ -106,10 +108,24 @@ export function deriveRequirementRemovedEvent(tier: RequirementTier, label: stri
   return makeEvent("requirement_removed", "user", `Removed "${label}" as a ${TIER_LABEL[tier]}.`);
 }
 
+/** "Widen search" on the No Match card — a direct user action. */
+/** A derived trip-detail chip removed ("In San Antonio", "Capacity for 10",
+ * "Available for your dates") — the same requirement_removed event, naming
+ * the chip the person removed. */
+export function deriveTripDetailRemovedEvent(label: string): TaskEvent {
+  return makeEvent("requirement_removed", "user", `Removed "${label}" from the trip.`);
+}
+
+/** The user answered the destination question with "anywhere" — the
+ * destination constraint was relaxed, not supplied. */
+export function deriveDestinationUnconstrainedEvent(): TaskEvent {
+  return makeEvent("requirement_widened", "user", "Chose not to limit the search to a destination.");
+}
+
 export function deriveRequirementWidenedEvent(label: string): TaskEvent {
   return makeEvent(
     "requirement_widened",
-    "agent",
+    "user",
     `Widened the search — treated "${label}" as flexible instead of required.`,
   );
 }
@@ -199,6 +215,17 @@ export function deriveAlternativeRequestedEvent(): TaskEvent {
   );
 }
 
+/** The user cycled back to the first recommendation of the current result
+ * set ("Start over with the first option") — same search, same set. */
+export function deriveFirstOptionRequestedEvent(candidate: Candidate): TaskEvent {
+  return makeEvent(
+    "first_option_requested",
+    "user",
+    `Went back to the first option: ${candidateLabel(candidate)}.`,
+    { relatedIds: { campsiteId: candidate.campsite.id } },
+  );
+}
+
 export function deriveRecommendationAcceptedEvent(
   candidate: Candidate,
 ): TaskEvent {
@@ -251,13 +278,23 @@ export function derivePrerequisiteMissingEvent(
   );
 }
 
+const PREREQUISITE_LABEL: Record<PrerequisiteKind, string> = {
+  origin_location: "starting ZIP code",
+  check_in_date: "trip dates",
+  check_out_date: "trip dates",
+  guest_count: "party size",
+  destination: "destination",
+};
+
 export function derivePrerequisiteResolvedEvent(
   missing: PrerequisiteKind[],
 ): TaskEvent {
+  // Actor "user": the person supplied the missing information.
+  const provided = Array.from(new Set(missing.map((kind) => PREREQUISITE_LABEL[kind])));
   return makeEvent(
     "prerequisite_resolved",
-    "system",
-    `Received ${missing.join(" and ").replace(/_/g, " ")} — continuing.`,
+    "user",
+    `Provided the ${provided.join(" and ")}.`,
     { metadata: { missing: missing.join(",") } },
   );
 }

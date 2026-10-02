@@ -28,7 +28,7 @@ export type PrerequisiteKind =
   | "check_in_date"
   | "check_out_date"
   | "guest_count"
-  | "payment_method";
+  | "destination";
 
 export type PrerequisiteCheckResult =
   | { status: "actionable" }
@@ -159,11 +159,20 @@ function hasResolvableDateRange(intent: TripIntent): boolean {
 
 export function checkSearchPrerequisites(
   intent: TripIntent,
-  options: { availabilityBacked: boolean },
+  options: {
+    availabilityBacked: boolean;
+    // Facts the user has explicitly told CampOps to stop assuming (removing
+    // a destination or party-size chip): the search waits for a new value
+    // instead of running without one. Not required for a fresh request.
+    required?: PrerequisiteKind[];
+  },
 ): PrerequisiteCheckResult {
   const missing: PrerequisiteKind[] = [];
   if (hasOriginRelativeDistanceConstraint(intent) && !intent.originZip) {
     missing.push("origin_location");
+  }
+  if (options.required?.includes("destination") && !intent.destinationRegion) {
+    missing.push("destination");
   }
   if (options.availabilityBacked && !hasResolvableDateRange(intent)) {
     if (!intent.checkIn) missing.push("check_in_date");
@@ -176,9 +185,19 @@ export function checkSearchPrerequisites(
       missing.push("check_in_date", "check_out_date");
     }
   }
+  if (options.required?.includes("guest_count") && !intent.guestCount) {
+    missing.push("guest_count");
+  }
   return missing.length > 0
     ? { status: "missing_prerequisites", missing: dedupePrereqs(missing) }
     : { status: "actionable" };
+}
+
+/** The search prerequisites that exist only because the user removed them
+ * (see `checkSearchPrerequisites`' `required`) — carried in the pending
+ * missing list itself until the user supplies a new value. */
+export function explicitSearchRequirements(missing: PrerequisiteKind[] | null): PrerequisiteKind[] {
+  return (missing ?? []).filter((kind) => kind === "destination" || kind === "guest_count");
 }
 
 function dedupePrereqs(missing: PrerequisiteKind[]): PrerequisiteKind[] {
@@ -186,25 +205,26 @@ function dedupePrereqs(missing: PrerequisiteKind[]): PrerequisiteKind[] {
 }
 
 /**
- * Booking-date prerequisite: gates the Accept action itself (staging a
- * reservation), independent of the later guest-count/payment-method gate
- * `computeMissingFields` (src/lib/reservation.ts) already enforces at
- * RESERVE_ATTEMPT. A reservation must never be staged from a candidate the
- * user never actually attached a REAL, resolvable date range to — "Book
- * that one" said about a search whose dates never resolved to real
- * calendar dates must be refused here (Dataset Depth correction,
- * 2026-09-04 — `stageReservation` now derives nights/price/cancellation
- * cutoff from this exact range and throws if it can't).
+ * Booking prerequisites: gate the Choose action itself (staging a
+ * reservation). The reservation flow is not a requirements-gathering
+ * surface — everything a valid reservation needs apart from payment (a
+ * REAL, resolvable date range and the party size) is resolved here, in the
+ * conversation, before staging can happen at all. Dates come first, then
+ * party size, matching the order the questions are asked in.
  */
-export function checkBookingDatePrerequisites(
+export function checkBookingPrerequisites(
   intent: TripIntent,
 ): PrerequisiteCheckResult {
-  if (hasResolvableDateRange(intent)) return { status: "actionable" };
   const missing: PrerequisiteKind[] = [];
-  if (!intent.checkIn) missing.push("check_in_date");
-  if (!intent.checkOut) missing.push("check_out_date");
-  if (intent.checkIn && intent.checkOut) missing.push("check_in_date", "check_out_date");
-  return { status: "missing_prerequisites", missing: dedupePrereqs(missing) };
+  if (!hasResolvableDateRange(intent)) {
+    if (!intent.checkIn) missing.push("check_in_date");
+    if (!intent.checkOut) missing.push("check_out_date");
+    if (intent.checkIn && intent.checkOut) missing.push("check_in_date", "check_out_date");
+  }
+  if (!intent.guestCount || intent.guestCount < 1) missing.push("guest_count");
+  return missing.length > 0
+    ? { status: "missing_prerequisites", missing: dedupePrereqs(missing) }
+    : { status: "actionable" };
 }
 
 /**
@@ -236,12 +256,16 @@ const DATE_FOLLOWUP_QUESTIONS: Record<"search" | "booking", string> = {
 };
 
 const PREREQUISITE_QUESTIONS: Record<
-  Exclude<PrerequisiteKind, "check_in_date" | "check_out_date">,
+  Exclude<PrerequisiteKind, "check_in_date" | "check_out_date" | "guest_count">,
   string
 > = {
   origin_location: "What ZIP code should I use as your starting point?",
-  guest_count: "How many guests is this trip for?",
-  payment_method: "What payment method should I use?",
+  destination: "Where would you like to search instead?",
+};
+
+const PARTY_SIZE_QUESTIONS: Record<"search" | "booking", string> = {
+  search: "How many people are camping?",
+  booking: "How many people are camping? I need the party size to reserve this site.",
 };
 
 /**
@@ -266,5 +290,44 @@ export function questionFor(
   if (first === "check_in_date" || first === "check_out_date") {
     return dateAttempt >= 2 ? DATE_FOLLOWUP_QUESTIONS[context] : DATE_QUESTIONS[context];
   }
+  if (first === "guest_count") return PARTY_SIZE_QUESTIONS[context];
   return PREREQUISITE_QUESTIONS[first];
+}
+
+const PARTY_SIZE_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+
+/**
+ * Reads a party size out of a reply to the party-size question ("4",
+ * "4 people", "four of us", "just me"). A deterministic backstop for the
+ * interpreter, which isn't told which question was asked and may leave a
+ * bare number unmapped. Returns null when no size is recognizable — the
+ * question is then simply asked again.
+ */
+export function parsePartySizeAnswer(message: string): number | null {
+  const m = message.toLowerCase();
+  if (/\b(just|only) me\b|\bsolo\b|\bby myself\b/.test(m)) return 1;
+  const digits = m.match(/\b(\d{1,2})\b/);
+  if (digits) {
+    const n = Number(digits[1]);
+    return n >= 1 ? n : null;
+  }
+  const word = m.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/);
+  return word ? PARTY_SIZE_WORDS[word[1]] : null;
+}
+
+/**
+ * Whether a reply to "Where would you like to search instead?" says location
+ * doesn't matter ("Anywhere", "I don't care", "No preference"). The trip
+ * model has no "unconstrained" value for the interpreter to return, so —
+ * like `parsePartySizeAnswer` — this is a small deterministic reading of
+ * the answer, used only right after that question. An unconstrained
+ * destination is simply a null `destinationRegion` that is no longer being
+ * asked for: the same state a fresh broad request has.
+ */
+export function isUnconstrainedDestinationAnswer(message: string): boolean {
+  const m = message.toLowerCase().replace(/[’']/g, "");
+  return /\b(anywhere|any ?where|wherever|dont care|do not care|no preference|doesnt matter|does not matter|any (location|place|area|region)|not picky|open to anything|surprise me)\b/.test(m);
 }

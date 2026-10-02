@@ -1,4 +1,9 @@
-import { UNSATISFIED_PREFIX, UNVERIFIABLE_PREFIX, capacityRequirementLabel } from "@/lib/evaluate";
+import {
+  UNMET_PREFERENCE_PREFIX,
+  UNSATISFIED_PREFIX,
+  UNVERIFIABLE_PREFIX,
+  capacityRequirementLabel,
+} from "@/lib/evaluate";
 import type { RequirementTier, TripIntent } from "@/lib/schemas";
 
 /**
@@ -36,11 +41,11 @@ export function removeRequirement(
 
 /**
  * Recovers the raw requirement label from a Candidate Card "compromise"
- * description ("Doesn't satisfy: X" / "Couldn't verify: X"), or returns the
- * input unchanged when it carries no such prefix (a "preserved" label is
- * already raw). Compromises are always derived from hard-requirement checks
- * (evaluate.ts only ever builds them from `hardChecks`), so this only ever
- * needs to resolve against `hardRequirements`.
+ * description ("Doesn't satisfy: X" / "Couldn't verify: X" / "Didn't fully
+ * match: X"), or returns the input unchanged when it carries no such prefix
+ * (a "preserved" label is already raw). Card chips come from checks in ALL
+ * four requirement tiers (satisfied soft checks are shown as preserved since
+ * 2026-09-05), so resolve the result with `requirementKeyFor`.
  */
 export function rawRequirementLabel(displayLabel: string): string {
   if (displayLabel.startsWith(UNSATISFIED_PREFIX)) {
@@ -48,6 +53,9 @@ export function rawRequirementLabel(displayLabel: string): string {
   }
   if (displayLabel.startsWith(UNVERIFIABLE_PREFIX)) {
     return displayLabel.slice(UNVERIFIABLE_PREFIX.length);
+  }
+  if (displayLabel.startsWith(UNMET_PREFERENCE_PREFIX)) {
+    return displayLabel.slice(UNMET_PREFERENCE_PREFIX.length);
   }
   return displayLabel;
 }
@@ -64,6 +72,22 @@ export function rawRequirementLabel(displayLabel: string): string {
  * chip gets a working remove control — same rule, same underlying array,
  * regardless of which screen is asking.
  */
+export type RequirementKey = "hardRequirements" | "flexibleConstraints" | "preferences" | "priorities";
+const REQUIREMENT_KEYS: RequirementKey[] = ["hardRequirements", "flexibleConstraints", "preferences", "priorities"];
+
+/**
+ * Which of the trip's four literal requirement tiers holds this raw label —
+ * the single gate for whether a Candidate Card chip is removable, from any
+ * tier, through the same `removeRequirement` path the Trip Panel uses. null
+ * for structurally-derived checks ("Capacity for 4", the destination, the
+ * date range, pet eligibility): those aren't requirement entries; party
+ * size and dates are prerequisites of the search/reservation, changed
+ * through the conversation.
+ */
+export function requirementKeyFor(intent: TripIntent, rawLabel: string): RequirementKey | null {
+  return REQUIREMENT_KEYS.find((key) => intent[key].includes(rawLabel)) ?? null;
+}
+
 export function isRemovableHardRequirement(
   intent: TripIntent,
   displayLabel: string,
@@ -93,7 +117,7 @@ export function isRemovableHardRequirement(
  * pet count is a real trip change, made through the composer like any
  * other, not a chip.
  */
-export type DerivedRequirement = { label: string; tier: RequirementTier };
+export type DerivedRequirement = { label: string; tier: RequirementTier; source: ChipSource };
 
 /**
  * Panel-only pet label (2026-09-10): the evaluator's own synthetic pet
@@ -127,10 +151,65 @@ export function petPanelLabel(petCount: number | null): string {
 export function getDerivedRequirements(intent: TripIntent): DerivedRequirement[] {
   const derived: DerivedRequirement[] = [];
   if (intent.guestCount !== null) {
-    derived.push({ label: capacityRequirementLabel(intent.guestCount), tier: "hard" });
+    derived.push({ label: capacityRequirementLabel(intent.guestCount), tier: "hard", source: { kind: "party_size" } });
   }
   if (intent.travelingWithPets) {
-    derived.push({ label: petPanelLabel(intent.petCount), tier: "hard" });
+    derived.push({ label: petPanelLabel(intent.petCount), tier: "hard", source: { kind: "pets" } });
   }
   return derived;
+}
+
+/**
+ * The trip fact a removable chip stands for (requirement-removal model,
+ * 2026-10-01): X means "CampOps, don't assume this anymore" — it clears the
+ * SEMANTIC SOURCE behind the chip, never just its display words. A literal
+ * requirement entry is removed from its own tier; a derived chip clears the
+ * structured field it was computed from ("Capacity for 10" → party size,
+ * "In San Antonio" → destination, "Available for your dates" → dates).
+ * Whether the search can still run afterwards is decided by the existing
+ * prerequisite checks, not here.
+ */
+export type ChipSource =
+  | { kind: "requirement"; key: RequirementKey; value: string }
+  | { kind: "destination" }
+  | { kind: "dates" }
+  | { kind: "party_size" }
+  | { kind: "pets" }
+  | { kind: "budget"; field: "maxPerNight" | "maxTotal" };
+
+export function resolveChipSource(intent: TripIntent, displayLabel: string): ChipSource | null {
+  const raw = rawRequirementLabel(displayLabel);
+  const key = requirementKeyFor(intent, raw);
+  if (key) return { kind: "requirement", key, value: raw };
+  if (intent.destinationRegion && raw === `In ${intent.destinationRegion}`) return { kind: "destination" };
+  if (raw === "Available for your dates" && (intent.checkIn || intent.checkOut)) return { kind: "dates" };
+  if (intent.guestCount !== null && raw === capacityRequirementLabel(intent.guestCount)) return { kind: "party_size" };
+  if (intent.travelingWithPets && (raw === "Pet-friendly" || raw === petPanelLabel(intent.petCount))) return { kind: "pets" };
+  if (intent.budget?.maxPerNight != null && raw === `Nightly rate under $${intent.budget.maxPerNight}`) {
+    return { kind: "budget", field: "maxPerNight" };
+  }
+  if (intent.budget?.maxTotal != null && raw === `Total stay under $${intent.budget.maxTotal}`) {
+    return { kind: "budget", field: "maxTotal" };
+  }
+  return null;
+}
+
+/** Clears only the chip's own source; every other trip fact is untouched. */
+export function clearChipSource(intent: TripIntent, source: ChipSource): TripIntent {
+  switch (source.kind) {
+    case "requirement":
+      return removeRequirement(intent, source.key, source.value).intent;
+    case "destination":
+      return { ...intent, destinationRegion: null };
+    case "dates":
+      return { ...intent, checkIn: null, checkOut: null };
+    case "party_size":
+      return { ...intent, guestCount: null };
+    case "pets":
+      return { ...intent, travelingWithPets: false, petCount: null };
+    case "budget": {
+      const budget = intent.budget ? { ...intent.budget, [source.field]: null } : null;
+      return { ...intent, budget: budget && (budget.maxPerNight != null || budget.maxTotal != null) ? budget : null };
+    }
+  }
 }

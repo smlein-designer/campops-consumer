@@ -2,7 +2,7 @@ import { Banknote, Calendars, MapPin, Users } from "lucide-react";
 import { text } from "@/lib/typography";
 import { RequirementChip } from "@/components/campops/requirement-chip";
 import { Pill } from "@/components/campops/badge";
-import { rawRequirementLabel } from "@/lib/requirements";
+import type { ChipSource } from "@/lib/requirements";
 
 function Fact({
   icon,
@@ -29,8 +29,9 @@ function Fact({
 /**
  * Rich candidate presentation card (CampOps DS "Candidate Card").
  *
- * Photo: the POC dataset has no per-site photography, so every site shows
- * the same stand-in image with an honest "1 / 1" counter. The DS card's
+ * Photo: one stand-in photo per site (`photoSrc`, chosen deterministically
+ * from the DS photo set by setting and site type — see campsite-photos.ts),
+ * with an honest "1 / 1" counter. The DS card's
  * carousel dots and expand (lightbox) button are deliberately omitted —
  * with a single image there is nothing to page through, and no expansion
  * behavior exists to back an expand affordance.
@@ -42,13 +43,13 @@ function Fact({
  * direct-manipulation chip removal is now available here too, not only on
  * the Trip Panel's plain-chip fallback — the same remove control, wired to
  * the same `onRemoveRequirement` state transition the caller also uses for
- * the plain chip list. `removableHardLabels` gates it per-chip: only labels
- * that correspond to a literal `hardRequirements` entry get a working remove
- * icon (synthetic checks like "Capacity for 4" — derived from `guestCount`,
- * not from requirement text — render the same non-interactive chip as
- * always, since there is nothing in `hardRequirements` for them to remove).
+ * the plain chip list. Every chip's X works: `chipSourceFor` maps it to the
+ * trip fact it stands for — a literal requirement in any tier, or the field
+ * a derived chip comes from ("Capacity for 4" → party size, "In Hill
+ * Country" → destination, "Available for your dates" → dates).
  */
 export function CandidateCard({
+  photoSrc,
   location,
   siteName,
   siteType,
@@ -60,9 +61,10 @@ export function CandidateCard({
   preserved,
   compromises,
   explanation,
-  removableHardLabels,
-  onRemoveRequirement,
+  chipSourceFor,
+  onRemoveChip,
 }: {
+  photoSrc: string;
   location: string;
   siteName: string;
   siteType: string;
@@ -74,23 +76,23 @@ export function CandidateCard({
   preserved: string[];
   compromises: string[];
   explanation: string;
-  /** Set of raw `hardRequirements` labels currently removable this way. */
-  removableHardLabels?: Set<string>;
-  /** Called with the raw (unprefixed) requirement label to remove. */
-  onRemoveRequirement?: (rawLabel: string) => void;
+  /** The trip fact a chip (by display label) stands for. */
+  chipSourceFor?: (displayLabel: string) => ChipSource | null;
+  /** Called with the chip's source and display label to remove it. */
+  onRemoveChip?: (source: ChipSource, displayLabel: string) => void;
 }) {
   function removeHandlerFor(displayLabel: string): (() => void) | undefined {
-    const raw = rawRequirementLabel(displayLabel);
-    if (!removableHardLabels?.has(raw) || !onRemoveRequirement) return undefined;
-    return () => onRemoveRequirement(raw);
+    const source = chipSourceFor?.(displayLabel);
+    if (!source || !onRemoveChip) return undefined;
+    return () => onRemoveChip(source, displayLabel);
   }
   return (
     <div className="flex w-full shrink-0 flex-col items-start gap-4 overflow-hidden rounded-md border border-border bg-card">
       <div className="relative h-[180px] w-full shrink-0 bg-muted">
         {/* eslint-disable-next-line @next/next/no-img-element -- static
-            stand-in photo shared by every site (see doc comment above). */}
+            stand-in photo (see doc comment above). */}
         <img
-          src="/assets/campsite-placeholder.jpg"
+          src={photoSrc}
           alt=""
           className="absolute inset-0 size-full object-cover"
         />

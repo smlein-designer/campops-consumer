@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist_Mono, National_Park, Public_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -26,6 +26,17 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "CampOps",
   description: "CampOps Consumer Agentic Booking POC",
+};
+
+// `interactiveWidget: "resizes-content"`: where supported (Android Chrome
+// 108+), the software keyboard shrinks the layout viewport itself, so the
+// bottom-anchored composer layer rides above the keyboard natively. Browsers
+// that ignore it (notably iOS Safari) are handled by `useVisualViewport`.
+// Zoom is deliberately left enabled.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -1,5 +1,7 @@
 import { Drawer } from "@base-ui/react/drawer";
+import { PanelHeader } from "@/components/campops/panel-header";
 import { TripRequirementsList } from "@/components/campops/trip-requirements-list";
+import type { ChipSource } from "@/lib/requirements";
 import { text } from "@/lib/typography";
 import type { TripIntent } from "@/lib/schemas";
 
@@ -17,6 +19,12 @@ import type { TripIntent } from "@/lib/schemas";
  * `changed` renders the collapsed grab bar in its green "trip changed,
  * not yet seen" state — the caller clears it when the sheet is opened.
  *
+ * While the software keyboard is open (Pages v2 "Keyboard open — Mobile")
+ * the grab bar and its swipe target are removed from the foreground
+ * composition. That's purely presentational, so it never acknowledges a
+ * changed trip: the grab bar returns in whatever state it had once the
+ * keyboard closes. Trip details stay reachable from the Mobile Status Bar.
+ *
  * Shows the same goal statement and `TripRequirementsList` the desktop
  * Trip Panel shows persistently; chip removal here goes through the
  * identical `onRemove` callback — no separate mobile removal path.
@@ -28,21 +36,21 @@ export function TripDetailsSheet({
   changed,
   intent,
   onRemove,
-  onViewActivity,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   changed: boolean;
   intent: TripIntent;
-  onRemove: (key: keyof TripIntent, value: string) => void;
-  onViewActivity: () => void;
+  onRemove: (source: ChipSource, label: string) => void;
 }) {
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange}>
       {/* Collapsed grab bar. The button is the accessible, keyboard-operable
           control; Base UI's SwipeArea (aria-hidden by design, so it must not
           wrap the button) sits transparently on top of it to catch swipe-up
-          gestures and taps. */}
+          gestures and taps. Both sit at the bottom of the visible area and
+          extend over the bottom safe area; while the software keyboard is
+          open (`data-keyboard-open`, see useVisualViewport) both are hidden. */}
       <button
         type="button"
         aria-label={
@@ -50,21 +58,24 @@ export function TripDetailsSheet({
         }
         aria-expanded={open}
         onClick={() => onOpenChange(true)}
-        className="fixed inset-x-0 bottom-0 z-30 flex h-9 w-full cursor-pointer items-start justify-center rounded-t-xl bg-card pt-4 shadow-[0_10px_15px_-3px_rgb(0_0_0/0.1),0_4px_6px_-4px_rgb(0_0_0/0.1),0_-2px_8px_rgb(0_0_0/0.06)] focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none lg:hidden"
+        className="fixed inset-x-0 bottom-[var(--keyboard-inset,0px)] z-30 flex h-[calc(2.25rem+var(--safe-bottom))] w-full cursor-pointer items-start justify-center rounded-t-xl bg-card pt-4 shadow-[0_10px_15px_-3px_rgb(0_0_0/0.1),0_4px_6px_-4px_rgb(0_0_0/0.1),0_-2px_8px_rgb(0_0_0/0.06)] focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none in-data-[keyboard-open]:hidden lg:hidden"
       >
         <span
-          className={`h-1 w-9 rounded-full transition-colors ${changed ? "bg-primary" : "bg-border"}`}
+          className={`h-1 w-9 rounded-full transition-[background-color,box-shadow] ${
+            changed ? "border-[0.5px] border-white bg-primary shadow-[0_0_12px_1px_var(--primary)]" : "bg-border"
+          }`}
         />
       </button>
       <Drawer.SwipeArea
         onClick={() => onOpenChange(true)}
-        className="fixed inset-x-0 bottom-0 z-30 h-9 cursor-pointer lg:hidden"
+        className="fixed inset-x-0 bottom-[var(--keyboard-inset,0px)] z-30 h-[calc(2.25rem+var(--safe-bottom))] cursor-pointer in-data-[keyboard-open]:hidden lg:hidden"
       />
 
       <Drawer.Portal>
-        <Drawer.Backdrop className="fixed inset-x-0 top-14 bottom-0 z-40 bg-scrim opacity-[calc(1_-_var(--drawer-swipe-progress))] transition-opacity duration-300 data-ending-style:opacity-0 data-starting-style:opacity-0 data-swiping:duration-0 lg:hidden" />
+        {/* Tint starts below the header + Mobile Status Bar (56 + 44px), per Pages v2. */}
+        <Drawer.Backdrop className="fixed inset-x-0 top-[100px] bottom-0 z-40 bg-scrim opacity-[calc(1_-_var(--drawer-swipe-progress))] transition-opacity duration-300 data-ending-style:opacity-0 data-starting-style:opacity-0 data-swiping:duration-0 lg:hidden" />
         <Drawer.Viewport className="fixed inset-0 z-50 flex items-end lg:hidden">
-          <Drawer.Popup className="flex max-h-[85dvh] w-full translate-y-[var(--drawer-swipe-movement-y)] flex-col rounded-t-xl bg-card shadow-[0_10px_15px_-3px_rgb(0_0_0/0.1),0_4px_6px_-4px_rgb(0_0_0/0.1)] transition-transform duration-300 ease-out outline-none data-ending-style:translate-y-full data-starting-style:translate-y-full data-swiping:duration-0">
+          <Drawer.Popup aria-label="Your trip" className="flex max-h-[85dvh] w-full translate-y-[var(--drawer-swipe-movement-y)] flex-col rounded-t-xl bg-card shadow-[0_10px_15px_-3px_rgb(0_0_0/0.1),0_4px_6px_-4px_rgb(0_0_0/0.1)] transition-transform duration-300 ease-out outline-none data-ending-style:translate-y-full data-starting-style:translate-y-full data-swiping:duration-0">
             <Drawer.Close
               aria-label="Hide trip details"
               className="flex h-9 w-full shrink-0 cursor-pointer items-start justify-center pt-4 focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none"
@@ -72,21 +83,7 @@ export function TripDetailsSheet({
               <span className="h-1 w-9 rounded-full bg-border" />
             </Drawer.Close>
             <div className="flex flex-col gap-4 overflow-y-auto px-6 pb-6">
-              <div className="flex items-center justify-between gap-4">
-                <Drawer.Title className={`${text.displayH3} text-card-foreground`}>
-                  Your trip
-                </Drawer.Title>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onOpenChange(false);
-                    onViewActivity();
-                  }}
-                  className={`${text.bodySm} cursor-pointer whitespace-nowrap text-muted-foreground underline`}
-                >
-                  View activity
-                </button>
-              </div>
+              <PanelHeader title="Your trip" />
               {intent.goalStatement && (
                 <p className={`${text.bodySm} text-muted-foreground`}>
                   &ldquo;{intent.goalStatement}&rdquo;

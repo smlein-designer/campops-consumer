@@ -73,7 +73,7 @@ run("Both Composer render sites pass the same ref", () => {
 run("Focus restoration is keyed on the isWorking transition, not fired unconditionally on submit", () => {
   const effectSection = pageSource.slice(
     pageSource.indexOf("Restores focus the moment"),
-    pageSource.indexOf("Restores focus the moment") + 1200,
+    pageSource.indexOf("}, [isWorking]);", pageSource.indexOf("Restores focus the moment")) + 16,
   );
   assert(/useEffect\(/.test(effectSection), "a useEffect must drive focus restoration");
   assert(/if \(isWorking\) return;/.test(effectSection), "must bail out while still working (the input is disabled and cannot hold focus)");
@@ -83,7 +83,7 @@ run("Focus restoration is keyed on the isWorking transition, not fired unconditi
 run("Focus restoration is one-shot and gated on the pending flag (never unconditional)", () => {
   const effectSection = pageSource.slice(
     pageSource.indexOf("Restores focus the moment"),
-    pageSource.indexOf("Restores focus the moment") + 1200,
+    pageSource.indexOf("}, [isWorking]);", pageSource.indexOf("Restores focus the moment")) + 16,
   );
   assert(
     /if \(!pendingComposerFocusRef\.current\) return;/.test(effectSection),
@@ -95,14 +95,72 @@ run("Focus restoration is one-shot and gated on the pending flag (never uncondit
   );
 });
 
-run("handleSubmit (Send click AND Enter, both routed through the same form) marks focus as pending", () => {
+run("Mobile: the one focus-restoration site refuses to refocus, however the pending flag was set", () => {
+  const effectSection = pageSource.slice(
+    pageSource.indexOf("Restores focus the moment"),
+    pageSource.indexOf("}, [isWorking]);", pageSource.indexOf("Restores focus the moment")) + 16,
+  );
+  const guard = effectSection.indexOf("if (submitEndsInputInteraction()) return;");
+  const focusCall = effectSection.indexOf("composerInputRef.current?.focus();");
+  assert(guard !== -1 && focusCall !== -1 && guard < focusCall, "the isWorking-transition effect must bail out on mobile BEFORE calling .focus()");
+  const focusCalls = pageSource.match(/composerInputRef\.current\?\.focus\(\)/g) ?? [];
+  assert(
+    focusCalls.length === 3,
+    `only three composer .focus() call sites may exist (the guarded restoration effect + the explicit Change-a-requirement and Edit-reservation taps) — found ${focusCalls.length}`,
+  );
+  // The Edit-reservation focus is part of the user's own tap (synchronous,
+  // right after the conversation is rendered), never a later side effect.
+  const edit = pageSource.slice(
+    pageSource.indexOf("function handleEditReservation()"),
+    pageSource.indexOf("\n  }\n", pageSource.indexOf("function handleEditReservation()")),
+  );
+  assert(
+    /flushSync\(\(\) => setView\("search"\)\);\s*composerInputRef\.current\?\.focus\(\);/.test(edit),
+    "Edit reservation focuses the composer within the same tap",
+  );
+});
+
+run("handleSubmit (Send click AND Enter, both routed through the same form) marks focus as pending on desktop", () => {
   const handleSubmitSection = pageSource.slice(
     pageSource.indexOf("function handleSubmit()"),
-    pageSource.indexOf("function handleSubmit()") + 600,
+    pageSource.indexOf("void submitMessage(draft);", pageSource.indexOf("function handleSubmit()")),
   );
   assert(
     /pendingComposerFocusRef\.current = true;/.test(handleSubmitSection),
     "handleSubmit must set the pending-focus flag — this is the single choke point for both Send-click and Enter, since both submit the same <form>",
+  );
+});
+
+run("Mobile: submitting dismisses the keyboard and never queues a composer refocus (phone-QA correction, 2026-10-01)", () => {
+  const handleSubmitSection = pageSource.slice(
+    pageSource.indexOf("function handleSubmit()"),
+    pageSource.indexOf("void submitMessage(draft);", pageSource.indexOf("function handleSubmit()")),
+  );
+  const mobileBranch = handleSubmitSection.slice(
+    handleSubmitSection.indexOf("if (submitEndsInputInteraction())"),
+    handleSubmitSection.indexOf("} else {"),
+  );
+  const desktopBranch = handleSubmitSection.slice(handleSubmitSection.indexOf("} else {"));
+  assert(
+    handleSubmitSection.includes("if (submitEndsInputInteraction())") && handleSubmitSection.includes("} else {"),
+    "handleSubmit must branch on submitEndsInputInteraction()",
+  );
+  assert(
+    /composerInputRef\.current\?\.blur\(\)/.test(mobileBranch),
+    "the mobile branch must blur the real composer input (dismissing the software keyboard)",
+  );
+  assert(
+    !/pendingComposerFocusRef\.current = true;/.test(mobileBranch),
+    "the mobile branch must NOT queue a refocus — the keyboard returns only on an explicit tap",
+  );
+  assert(
+    /pendingComposerFocusRef\.current = true;/.test(desktopBranch),
+    "desktop keeps Persistent Composer Focus",
+  );
+  const helper = pageSource.slice(pageSource.indexOf("function submitEndsInputInteraction()"));
+  assert(
+    /matchMedia\("\(max-width: 1023px\), \(pointer: coarse\)"\)/.test(helper.slice(0, 300)),
+    "mobile = below the lg layout breakpoint, or any touch-first (software-keyboard) device",
   );
 });
 
@@ -157,9 +215,13 @@ run("handleChangeRequirement (an explicit 'let me type' action) still focuses th
 
 run("Dialog/sheet components are untouched by this slice (existing focus-trap/return behavior is not modified)", () => {
   // Structural guard: none of this slice's new identifiers should appear
-  // in the shared Dialog primitive or the sheet/dialog-using components —
-  // this feature is entirely additive in page.tsx/composer.tsx and must
-  // never need to reach into modal internals.
+  // in the Your Trip sheet — this feature is entirely additive in
+  // page.tsx/composer.tsx and must never need to reach into modal internals.
+  const sheetSource = readFileSync(join(__dirname, "..", "src", "components", "campops", "trip-details-sheet.tsx"), "utf-8");
+  assert(
+    !/composerInputRef|pendingComposerFocusRef/.test(sheetSource),
+    "the Your Trip sheet must remain completely unaware of composer focus state",
+  );
   const dialogSource = readFileSync(join(__dirname, "..", "src", "components", "ui", "dialog.tsx"), "utf-8");
   assert(
     !/composerInputRef|pendingComposerFocusRef/.test(dialogSource),

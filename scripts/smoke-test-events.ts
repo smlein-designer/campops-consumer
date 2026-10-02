@@ -14,6 +14,9 @@ import {
   deriveClarificationResolvedEvent,
   deriveEvaluationPerformedEvent,
   deriveIntentEvent,
+  derivePrerequisiteResolvedEvent,
+  deriveRequirementWidenedEvent,
+  deriveUnsupportedEvent,
   deriveRecommendationAcceptedEvent,
   deriveRecommendationSelectedEvent,
   deriveReplacementSelectedEvent,
@@ -246,27 +249,21 @@ run(
     events.push(deriveRecommendationAcceptedEvent(top));
     const staged = stageReservation(
       top.campsite,
-      intent.guestCount,
+      intent.guestCount as number,
       intent.checkIn as string,
       intent.checkOut as string,
     );
     events.push(staged.event);
 
-    const attempt1 = transitionReservation(staged.reservation, {
-      type: "RESERVE_ATTEMPT",
-    });
-    events.push(attempt1.event); // missing payment -> missing_info_detected
-
-    const withPayment = transitionReservation(attempt1.reservation, {
+    // No saved payment: Review -> Add payment -> Save lands on Confirm.
+    // There is no failed attempt / missing-info step anywhere.
+    const adding = transitionReservation(staged.reservation, { type: "BEGIN_ADD_PAYMENT" });
+    events.push(adding.event);
+    const attempt2 = transitionReservation(adding.reservation, {
       type: "ADD_PAYMENT_METHOD",
       label: "Visa •••• 4471",
     });
-    events.push(withPayment.event);
-
-    const attempt2 = transitionReservation(withPayment.reservation, {
-      type: "RESERVE_ATTEMPT",
-    });
-    events.push(attempt2.event); // complete -> authorization_presented
+    events.push(attempt2.event); // -> ready_for_authorization (Confirm)
 
     const begin = transitionReservation(attempt2.reservation, {
       type: "BEGIN_AUTHORIZE",
@@ -283,9 +280,8 @@ run(
         JSON.stringify([
           "recommendation_accepted",
           "reservation_staged",
-          "missing_info_detected",
+          "payment_entry_started",
           "payment_method_added",
-          "authorization_presented",
           "authorization_initiated",
           "reservation_reserved",
         ]),
@@ -333,6 +329,29 @@ run(
     );
   },
 );
+
+// 12. Activity tracks the USER's actions as well as CampOps' — including
+// what the person does through the conversation, not only button taps.
+run("User actions are credited to the user", () => {
+  const trip: TripIntent = { ...EMPTY_TRIP_INTENT, goalStatement: "A lake weekend.", guestCount: 4 };
+  const established = deriveIntentEvent(EMPTY_TRIP_INTENT, trip, false)!;
+  const refined = deriveIntentEvent(trip, { ...trip, guestCount: 6 }, true)!;
+  const cases: [string, { actor: string; description: string }][] = [
+    ["describing a new trip", established],
+    ["changing the trip", refined],
+    ["answering CampOps' question", deriveClarificationResolvedEvent()],
+    ["asking for something out of scope", deriveUnsupportedEvent()],
+    ["tapping Widen search", deriveRequirementWidenedEvent("Near water")],
+    ["supplying the party size", derivePrerequisiteResolvedEvent(["guest_count"])],
+    ["tapping Show me another option", deriveAlternativeRequestedEvent()],
+  ];
+  for (const [what, e] of cases) assert(e.actor === "user", `${what} is the user's action — got "${e.actor}" (${e.description})`);
+  assert(
+    derivePrerequisiteResolvedEvent(["check_in_date", "check_out_date"]).description === "Provided the trip dates.",
+    "supplied prerequisites are described in plain words",
+  );
+  assert(deriveClarificationRequestedEvent("How many?").actor === "agent", "CampOps' own question stays CampOps'");
+});
 
 if (failures > 0) {
   console.error(`\n${failures} event check(s) failed.`);

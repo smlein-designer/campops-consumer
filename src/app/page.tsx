@@ -1,15 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Header } from "@/components/campops/header";
-import { Badge, type BadgeSeverity } from "@/components/campops/badge";
+import type { BadgeSeverity } from "@/components/campops/badge";
+import { PanelHeader } from "@/components/campops/panel-header";
 import { CampIllustration } from "@/components/campops/camp-illustration";
+import { useVisualViewport } from "@/lib/use-visual-viewport";
+import { newId } from "@/lib/id";
+import { campsitePhotoSrc } from "@/lib/campsite-photos";
 import { Composer } from "@/components/campops/composer";
 import { ChatBubble, ChatRow } from "@/components/campops/chat-bubble";
 import { CandidateCard } from "@/components/campops/candidate-card";
 import { AttentionCard } from "@/components/campops/attention-card";
 import { ReservationReview } from "@/components/campops/reservation-review";
-import { AuthorizeBookingDialog } from "@/components/campops/authorize-booking-dialog";
 import { EventRow } from "@/components/campops/event-row";
 import { TripStatusBar } from "@/components/campops/trip-status-bar";
 import { TripDetailsSheet } from "@/components/campops/trip-details-sheet";
@@ -20,13 +24,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { text } from "@/lib/typography";
 import { evaluateCampsites } from "@/lib/evaluate";
-import { buildRecoveryMessages } from "@/lib/recovery";
+import { buildLossMessage, buildRecoveryMessages } from "@/lib/recovery";
 import { summarizeNoMatch, widenSearch } from "@/lib/no-match";
-import { removeRequirement } from "@/lib/requirements";
 import {
-  checkBookingDatePrerequisites,
+  clearChipSource,
+  rawRequirementLabel,
+  resolveChipSource,
+  type ChipSource,
+} from "@/lib/requirements";
+import {
+  checkBookingPrerequisites,
+  parsePartySizeAnswer,
   checkSearchPrerequisites,
+  explicitSearchRequirements,
   isExploratoryDiscoveryMessage,
+  isUnconstrainedDestinationAnswer,
   questionFor,
   type PrerequisiteKind,
 } from "@/lib/prerequisites";
@@ -41,12 +53,13 @@ import {
   diffAddedRequirements,
 } from "@/lib/refinement-acknowledgment";
 import {
-  computeMissingFields,
+  discardStagedReservation,
   stageReservation,
   transitionReservation,
 } from "@/lib/reservation";
 import {
   deriveAlternativeRequestedEvent,
+  deriveFirstOptionRequestedEvent,
   deriveAvailabilityChangedEvent,
   deriveCandidateExcludedEvent,
   deriveCandidateQuestionAnsweredEvent,
@@ -64,6 +77,8 @@ import {
   deriveRecommendationSelectedEvent,
   deriveReplacementSelectedEvent,
   deriveRequirementRemovedEvent,
+  deriveTripDetailRemovedEvent,
+  deriveDestinationUnconstrainedEvent,
   deriveRequirementWidenedEvent,
   deriveTaskClosedEvent,
   deriveUnsupportedEvent,
@@ -74,6 +89,7 @@ import {
   type EvaluationResult,
   type IntentInterpretation,
   type Reservation,
+  type ReservationEvent,
   type TaskEvent,
   type TripIntent,
 } from "@/lib/schemas";
@@ -113,10 +129,32 @@ function tripStateKey(intent: TripIntent): string {
   return JSON.stringify({ ...intent, goalStatement: "" });
 }
 
-// Simulated commit delay for the "authorizing" state (Handoff Spec §5's
-// Pressed/Loading requirement) — purely cosmetic; the resulting state
-// transition itself is deterministic regardless of this duration.
-const AUTHORIZE_DELAY_MS = 600;
+/** True where the composer is typed into with a software keyboard: the
+ * mobile layout (below lg) or any touch-first device (e.g. a tablet in the
+ * desktop layout). There, submitting ends the input interaction instead of
+ * keeping the keyboard up across turns. */
+function submitEndsInputInteraction(): boolean {
+  return window.matchMedia("(max-width: 1023px), (pointer: coarse)").matches;
+}
+
+// Simulated charge for the Processing payment state — long enough to read
+// ("usually takes a few seconds"); the resulting state transition itself is
+// deterministic regardless of this duration.
+const AUTHORIZE_DELAY_MS = 2000;
+
+// Simulated latency of a live campsite query ("Show me another option",
+// availability-change replacement) — long enough to see CampOps working,
+// short enough not to make the POC feel slow.
+const RECOMMENDATION_QUERY_DELAY_MS = 900;
+
+/** Stand-in for a live campsite inventory query: runs `query` after the
+ * simulated latency. The recommendation transition awaits this promise, so
+ * a real async request can replace it without touching the UI state. */
+function simulateCampsiteQuery<T>(query: () => T): Promise<T> {
+  return new Promise((resolve) =>
+    setTimeout(() => resolve(query()), RECOMMENDATION_QUERY_DELAY_MS),
+  );
+}
 
 function agentSummary(evaluation: EvaluationResult): string {
   const top = evaluation.candidates[0];
@@ -129,9 +167,6 @@ function agentSummary(evaluation: EvaluationResult): string {
   return "Nothing in the current dataset satisfies every requirement you've given me. You can widen a requirement or ask me to try something different.";
 }
 
-function newId() {
-  return crypto.randomUUID();
-}
 
 function formatTimestamp(ms: number): string {
   return new Date(ms).toLocaleTimeString([], {
@@ -180,6 +215,10 @@ export default function Home() {
   // marked unavailable. Never populated from a model response.
   const [unavailableIds, setUnavailableIds] = useState<Set<string>>(new Set());
   const [isWorking, setIsWorking] = useState(false);
+  // Transient "finding the next campsite" state between recommendations
+  // (Show me another option / availability change) — see
+  // beginRecommendationQuery.
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Task-local flags driving event derivation, not display — reset with the
   // rest of task state on "Start a new search".
@@ -203,7 +242,7 @@ export default function Home() {
   // its own (unrelated) phrasing. Resolving fully just lets the normal
   // evaluate-and-announce flow proceed — it never produces an intermediate
   // recommendation while any prerequisite remains missing.
-  // `pendingBookingDatesRequest`: an Accept was blocked because the trip has
+  // `pendingBookingRequest`: an Accept was blocked because the trip has
   // no concrete check-in/check-out; resolving it must finish the SAME
   // Accept automatically — the user asked once, not twice.
   const [pendingSearchMissing, setPendingSearchMissing] = useState<
@@ -223,7 +262,7 @@ export default function Home() {
   // message should classify itself fresh).
   const [currentRequestAvailabilityBacked, setCurrentRequestAvailabilityBacked] =
     useState<boolean | null>(null);
-  const [pendingBookingDatesRequest, setPendingBookingDatesRequest] =
+  const [pendingBookingRequest, setPendingBookingRequest] =
     useState(false);
   // Search Truth correction (2026-09-02): counts consecutive user turns that
   // LOOKED like a date attempt (see looksLikeDateAttempt) but still left
@@ -253,6 +292,13 @@ export default function Home() {
   const [recommendationOrigin, setRecommendationOrigin] =
     useState<RecommendationOrigin>("initial");
   const [reservation, setReservationState] = useState<Reservation | null>(null);
+  // The payment method the user saved earlier in this session — kept when a
+  // staged reservation is set aside (Edit / Cancel) so choosing again doesn't
+  // ask for it twice. Cleared only by a full new search.
+  const [savedPaymentMethod, setSavedPaymentMethod] = useState<string | null>(null);
+  // Deliberate, user-initiated trip editing (Edit reservation) — the
+  // conversation invites a change; cleared by the next message.
+  const [editingTrip, setEditingTrip] = useState(false);
   // Mirrors `reservation` for the timeout callback below, which needs the
   // freshest value without relying on a functional setState updater (which
   // React's Strict Mode may invoke twice in development — fine for a pure
@@ -297,12 +343,39 @@ export default function Home() {
   // composer becomes focusable again.
   const composerInputRef = useRef<HTMLInputElement>(null);
   const pendingComposerFocusRef = useRef(false);
-  // Bounded-workspace scrolling: the message list (its own scroll region on
-  // desktop), the mobile content plane (the scroll region below lg), and the
-  // message count already brought into view — see the effect that uses them.
+  // Bounded-workspace scrolling: the message list, the conversation column
+  // (the scroll region on desktop), the mobile content plane (the scroll
+  // region below lg), the composer's fade bar layered over whichever one is
+  // active, and the message count already brought into view — see the
+  // effect that uses them.
   const messageListRef = useRef<HTMLDivElement>(null);
+  const chatColumnRef = useRef<HTMLElement>(null);
   const contentPlaneRef = useRef<HTMLDivElement>(null);
+  const composerBarRef = useRef<HTMLDivElement>(null);
   const revealedMessageCountRef = useRef(0);
+  const startScrollerRef = useRef<HTMLDivElement>(null);
+  // Recommendation transition bookkeeping: the Trip Panel element, the
+  // in-flight query's token (bumped to cancel/supersede it), a synchronous
+  // "query active" lock (state alone can't stop a double-click within one
+  // render), a request to re-pin the panel to the top after the next
+  // render, and a one-shot "don't auto-reveal these messages" flag so
+  // transition messages never scroll the conversation.
+  const tripPanelRef = useRef<HTMLElement>(null);
+  const recommendationQueryRef = useRef(0);
+  const recommendationQueryActiveRef = useRef(false);
+  const pinPanelTopAfterRenderRef = useRef(false);
+  const suppressRevealRef = useRef<"all" | "mobile" | null>(null);
+  // What a recommendation transition reveals: the RESULT for a
+  // user-initiated change (Show me another option / Start over), or the
+  // EXPLANATION for a system-initiated one (availability change) — see
+  // beginRecommendationQuery.
+  const transitionRevealRef = useRef<"recommendation" | "explanation">(
+    "recommendation",
+  );
+  // Origin of the first candidate in the current result set ("initial", or
+  // "adapted" after an availability change) — restored when cycling back to
+  // it with "Start over with the first option".
+  const firstCandidateOriginRef = useRef<RecommendationOrigin>("initial");
 
   useEffect(() => {
     function cancelPendingFocusIfElsewhere(e: Event) {
@@ -341,41 +414,65 @@ export default function Home() {
   // if nothing else claimed focus in the meantime (see the listener
   // above), the composer regains it; otherwise this is a no-op, so an
   // explicit user focus change always wins, and this never fights it.
+  //
+  // This is the ONLY code path that focuses the composer as a side effect
+  // of a state transition. On mobile it never does (phone-QA correction,
+  // 2026-10-01): submitting ends the input interaction, and the keyboard
+  // returns only on an explicit tap — so this site refuses outright there,
+  // independent of how the pending flag got set.
   useEffect(() => {
     if (isWorking) return;
     if (!pendingComposerFocusRef.current) return;
     pendingComposerFocusRef.current = false;
+    if (submitEndsInputInteraction()) return;
     composerInputRef.current?.focus();
   }, [isWorking]);
 
   const hasStarted = messages.length > 0;
+  // Mobile software keyboard (Pages v2 "Keyboard open — Mobile"): the Start
+  // and conversation shells track the visual viewport so the composer layer
+  // stays immediately above the keyboard — see useVisualViewport.
+  useVisualViewport(
+    () =>
+      !hasStarted
+        ? startScrollerRef.current
+        : window.matchMedia("(min-width: 1024px)").matches
+          ? chatColumnRef.current
+          : contentPlaneRef.current,
+    { revealFocusedInput: !hasStarted },
+  );
   const activeCandidate = evaluation?.candidates[candidateIndex] ?? null;
   const showCandidateCard =
     !!activeCandidate && evaluation?.kind !== "no_match";
   // Same underlying array the Trip Panel's plain chip fallback reads from —
   // gates which Candidate Card preserved/compromise chips get a working
   // remove control (design-resolution update, 2026-09-01).
-  const hardRequirementsSet = new Set(intent.hardRequirements);
-  // Trip status (Handoff Spec's sequence "Working → Waiting for you → Needs
-  // attention"), shown in the mobile TripStatusBar and the desktop Trip
-  // Panel's status Badge. Driven off real state only: "Working" appears
-  // strictly while a request is actually in flight (`isWorking`) — never as
-  // an idle default — and otherwise reflects the last message's real
-  // kind/type and the real evaluation result.
+  // Trip status (Pages v2 status badges: Working → Waiting on you → No
+  // matching sites), shown in the Mobile Status Bar and the desktop Panel
+  // Header. Driven off real state only: "Working" appears strictly while a
+  // request is actually in flight (`isWorking`) — never as an idle default —
+  // and otherwise reflects the last message's real kind/type and the real
+  // evaluation result.
+  type TripStatus = { label: string; severity: BadgeSeverity; working?: boolean };
   const lastMessage = messages[messages.length - 1];
   const workingLabel = evaluation
     ? "Working: Updating search"
     : "Working: Searching campsites";
-  const tripStatus: { label: string; severity: BadgeSeverity } = isWorking
-    ? { label: workingLabel, severity: "neutral" }
+  const workingStatus: TripStatus = {
+    label: workingLabel,
+    severity: "neutral",
+    working: true,
+  };
+  const tripStatus: TripStatus = isWorking
+    ? workingStatus
     : evaluation?.kind === "no_match" &&
         !(
           lastMessage?.kind === "attention" &&
           (lastMessage.attentionType === "clarification" ||
             lastMessage.attentionType === "unsupported")
         )
-      ? { label: "Needs attention", severity: "advisory" }
-      : { label: "Waiting for you", severity: "neutral" };
+      ? { label: "No matching sites", severity: "blocking" }
+      : { label: "Waiting on you", severity: "advisory" };
   // Trip Panel heading + status Badge while a candidate is shown (Pages v2:
   // Recommendation / Alternative / Availability Lost frames). The same
   // label also feeds the a11y status announcement, so the two can't drift.
@@ -398,15 +495,44 @@ export default function Home() {
   // Handoff Spec 3's "status badge changes ... announced via a polite live
   // region, not by moving focus" — mirrors whatever status text is already
   // visible, never separately-invented copy.
+  // Recommendation transition loader — interim: the existing DS Working
+  // treatment (Badge + spinner), as no transition frame exists in Pages v2.
+  const findingStatus: TripStatus = {
+    label: "Working: Finding another option",
+    severity: "neutral",
+    working: true,
+  };
   const statusAnnouncement = isWorking
     ? workingLabel
-    : showCandidateCard
-      ? candidateHeading.title
-      : tripStatus.label;
+    : recommendationLoading
+      ? findingStatus.label
+      : showCandidateCard
+        ? candidateHeading.title
+        : tripStatus.label;
+  // The one status Badge for the current view: the recommendation's badge
+  // while a candidate is shown, otherwise the trip status — Working wins in
+  // both cases while a request or campsite query is in flight.
+  const currentStatus: TripStatus = isWorking
+    ? workingStatus
+    : recommendationLoading
+      ? findingStatus
+      : showCandidateCard
+        ? { label: candidateHeading.badge, severity: candidateHeading.severity }
+        : tripStatus;
+
   const tripKey = tripStateKey(intent);
   const tripChangedUnseen = hasStarted && tripKey !== seenTripKey;
   const canRequestAlternative =
     !!evaluation && candidateIndex + 1 < evaluation.candidates.length;
+  // Where the user is within the finite matching result set (0 matches is
+  // the separate No Match recovery): the only match, or the last of several.
+  // (a no_match result still lists every site as a non-match — that is
+  // not a result set, so its count is 0).
+  const matchCount =
+    evaluation && evaluation.kind !== "no_match" ? evaluation.candidates.length : 0;
+  const isOnlyMatch = showCandidateCard && matchCount === 1;
+  const isLastOfMatches =
+    showCandidateCard && matchCount > 1 && candidateIndex === matchCount - 1;
 
   function updateReservation(next: Reservation | null) {
     reservationRef.current = next;
@@ -483,13 +609,15 @@ export default function Home() {
   ) {
     const userMessage = rawText.trim();
     if (!userMessage) return;
+    // A new message supersedes any in-flight recommendation transition.
+    cancelRecommendationQuery();
     const forcedFollowUpQuestion = options?.forcedFollowUpQuestion ?? null;
 
     const priorIntent = intent;
     const wasPendingClarification = pendingClarification;
     const wasPendingSearchMissing = pendingSearchMissing;
     const wasPendingSearchAvailabilityBacked = pendingSearchAvailabilityBacked;
-    const wasPendingBookingDatesRequest = pendingBookingDatesRequest;
+    const wasPendingBookingRequest = pendingBookingRequest;
     const acceptedCandidateOnHold = activeCandidate;
     // Active-Recommendation Follow-Up correction (2026-09-05): snapshot
     // whether a recommendation already existed, and which candidate was
@@ -509,6 +637,7 @@ export default function Home() {
     const generationAtSubmit = intentGenerationRef.current;
 
     pushChat("user", userMessage);
+    setEditingTrip(false);
     setDraft("");
     setIsWorking(true);
     setError(null);
@@ -666,13 +795,41 @@ export default function Home() {
       // removal) so this only fires on the turn `travelingWithChildren`
       // first becomes true — never re-forcing the preference back in on a
       // later, unrelated turn after the user has removed it.
-      const normalizedIntent: TripIntent = applyFamilyPreferenceInference(
+      const inferredIntent: TripIntent = applyFamilyPreferenceInference(
         priorIntent,
         {
           ...dateNormalizedIntent,
           destinationRegion: normalizeDestinationRegion(dateNormalizedIntent.destinationRegion),
         },
       );
+      // Party-size backstop: when the question just asked was the party
+      // size (a Choose is waiting on it), read a bare "4" / "just me" reply
+      // deterministically if the interpreter left guestCount unset.
+      const askedForPartySize =
+        wasPendingSearchMissing?.[0] === "guest_count" ||
+        (wasPendingBookingRequest &&
+          (() => {
+            const prior = checkBookingPrerequisites(priorIntent);
+            return prior.status === "missing_prerequisites" && prior.missing[0] === "guest_count";
+          })());
+      const answeredPartySize =
+        askedForPartySize && !inferredIntent.guestCount ? parsePartySizeAnswer(userMessage) : null;
+      // "Anywhere" in answer to the destination question: location is
+      // intentionally unconstrained — the destination stays empty (never a
+      // fake "Anywhere" region) and stops being asked for.
+      const destinationUnconstrained =
+        wasPendingSearchMissing?.[0] === "destination" && isUnconstrainedDestinationAnswer(userMessage);
+      const partySized: TripIntent = answeredPartySize
+        ? { ...inferredIntent, guestCount: answeredPartySize }
+        : inferredIntent;
+      const normalizedIntent: TripIntent = destinationUnconstrained
+        ? { ...partySized, destinationRegion: null }
+        : partySized;
+      // Prerequisites the user actually supplied this turn (a waived
+      // destination is recorded as relaxed, not "provided").
+      const suppliedKinds = (kinds: PrerequisiteKind[]) =>
+        destinationUnconstrained ? kinds.filter((k) => k !== "destination") : kinds;
+      if (destinationUnconstrained) pushEvent(deriveDestinationUnconstrainedEvent());
 
       const intentEvent = deriveIntentEvent(
         priorIntent,
@@ -692,32 +849,39 @@ export default function Home() {
       // override by saying "actionable". Resolved first (an interrupted
       // Accept/search takes priority over re-deriving a fresh
       // recommendation this same turn).
-      if (wasPendingBookingDatesRequest) {
-        const datePrereq = checkBookingDatePrerequisites(normalizedIntent);
-        if (datePrereq.status === "actionable" && acceptedCandidateOnHold) {
-          pushEvent(
-            derivePrerequisiteResolvedEvent(["check_in_date", "check_out_date"]),
-          );
-          setPendingBookingDatesRequest(false);
+      if (wasPendingBookingRequest) {
+        const bookingPrereq = checkBookingPrerequisites(normalizedIntent);
+        const priorPrereq = checkBookingPrerequisites(priorIntent);
+        const wasMissing = priorPrereq.status === "missing_prerequisites" ? priorPrereq.missing : [];
+        const stillMissing = bookingPrereq.status === "missing_prerequisites" ? bookingPrereq.missing : [];
+        const resolved = wasMissing.filter((kind) => !stillMissing.includes(kind));
+        if (resolved.length > 0) pushEvent(derivePrerequisiteResolvedEvent(resolved));
+        if (!stillMissing.some((kind) => kind === "check_in_date" || kind === "check_out_date")) {
           setDateAskAttempts(0);
-          finishAccept(acceptedCandidateOnHold, normalizedIntent);
-          return;
         }
-        // Still missing (or the held candidate is gone) — re-ask rather
-        // than silently proceeding or losing the interrupted action. Loop
-        // protection: if the user's reply already looked like a date
-        // attempt and it still didn't resolve, escalate to a more specific
-        // follow-up instead of repeating the identical question.
-        const attempt = looksLikeDateAttempt(userMessage)
-          ? dateAskAttempts + 1
-          : dateAskAttempts;
-        setDateAskAttempts(attempt);
-        pushAttention(
-          "clarification",
-          "Needs your input",
-          questionFor(["check_in_date", "check_out_date"], "booking", attempt),
-        );
-        return;
+        if (bookingPrereq.status === "actionable" && acceptedCandidateOnHold) {
+          setPendingBookingRequest(false);
+          if (acceptedCandidateOnHold.campsite.capacity >= (normalizedIntent.guestCount as number)) {
+            finishAccept(acceptedCandidateOnHold, normalizedIntent);
+            return;
+          }
+          // The party turned out larger than the chosen site holds — fall
+          // through to the normal refinement flow, which re-evaluates the
+          // search against the real party size instead of staging a
+          // reservation the site can't honor.
+        } else if (acceptedCandidateOnHold) {
+          // Still missing something — ask for the next one rather than
+          // silently proceeding or losing the interrupted Choose. Loop
+          // protection for dates: a reply that looked like a date attempt
+          // but still didn't resolve escalates to a more specific question.
+          const asksDates = stillMissing[0] === "check_in_date" || stillMissing[0] === "check_out_date";
+          const attempt = asksDates && looksLikeDateAttempt(userMessage) ? dateAskAttempts + 1 : dateAskAttempts;
+          if (asksDates) setDateAskAttempts(attempt);
+          pushAttention("clarification", "Needs your input", questionFor(stillMissing, "booking", attempt));
+          return;
+        } else {
+          setPendingBookingRequest(false);
+        }
       }
 
       // Which prerequisite SET applies depends on what kind of request
@@ -735,6 +899,9 @@ export default function Home() {
       setCurrentRequestAvailabilityBacked(availabilityBacked);
       const searchPrereq = checkSearchPrerequisites(normalizedIntent, {
         availabilityBacked,
+        // A destination/party size the user removed stays required until
+        // they give a new one.
+        required: suppliedKinds(explicitSearchRequirements(wasPendingSearchMissing)),
       });
       if (searchPrereq.status === "missing_prerequisites") {
         // Only announce what's newly resolved/newly revealed — re-asking
@@ -745,8 +912,8 @@ export default function Home() {
               (k) => !searchPrereq.missing.includes(k),
             )
           : [];
-        if (justResolved.length > 0) {
-          pushEvent(derivePrerequisiteResolvedEvent(justResolved));
+        if (suppliedKinds(justResolved).length > 0) {
+          pushEvent(derivePrerequisiteResolvedEvent(suppliedKinds(justResolved)));
         }
         if (!wasPendingSearchMissing || justResolved.length > 0) {
           pushEvent(derivePrerequisiteMissingEvent(searchPrereq.missing));
@@ -772,7 +939,9 @@ export default function Home() {
       }
       setDateAskAttempts(0);
       if (wasPendingSearchMissing) {
-        pushEvent(derivePrerequisiteResolvedEvent(wasPendingSearchMissing));
+        if (suppliedKinds(wasPendingSearchMissing).length > 0) {
+          pushEvent(derivePrerequisiteResolvedEvent(suppliedKinds(wasPendingSearchMissing)));
+        }
         setPendingSearchMissing(null);
       }
 
@@ -831,6 +1000,7 @@ export default function Home() {
       setEvaluation(result);
       setCandidateIndex(0);
       setRecommendationOrigin("initial");
+      firstCandidateOriginRef.current = "initial";
       pushEvent(deriveRecommendationSelectedEvent(result));
       // Active-Recommendation Follow-Up correction (2026-09-05): only frame
       // this as a refinement acknowledgment when a recommendation already
@@ -857,12 +1027,20 @@ export default function Home() {
   }
 
   function handleSubmit() {
-    // Persistent Composer Focus (2026-09-09): both Send-click and Enter
-    // submit through this one function, so this is the single place that
-    // marks composer focus as pending — never set for handleQuickReply,
-    // which is the user explicitly clicking a different control and
-    // should not have focus dragged back to the composer afterward.
-    pendingComposerFocusRef.current = true;
+    // Both Send-click and Enter submit through this one function.
+    if (submitEndsInputInteraction()) {
+      // Mobile (phone-QA correction, 2026-10-01): submitting ends the input
+      // interaction. Dismiss the software keyboard and never queue a
+      // refocus, so the arriving agent/system content gets the viewport;
+      // the keyboard returns only when the user taps the composer again.
+      composerInputRef.current?.blur();
+    } else {
+      // Desktop — Persistent Composer Focus (2026-09-09): mark composer
+      // focus as pending so it returns once the response arrives. Never set
+      // for handleQuickReply, which is the user explicitly clicking a
+      // different control and should not have focus dragged back afterward.
+      pendingComposerFocusRef.current = true;
+    }
     void submitMessage(draft);
   }
 
@@ -890,6 +1068,7 @@ export default function Home() {
   }
 
   function handleWidenSearch() {
+    cancelRecommendationQuery();
     if (!evaluation || evaluation.kind !== "no_match") return;
     const { intent: widenedIntent, widened } = widenSearch(intent, evaluation);
     if (!widened) return;
@@ -903,6 +1082,7 @@ export default function Home() {
     setEvaluation(result);
     setCandidateIndex(0);
     setRecommendationOrigin("initial");
+    firstCandidateOriginRef.current = "initial";
     pushChat(
       "agent",
       `I widened the search — "${widened}" is now flexible instead of required.`,
@@ -912,34 +1092,85 @@ export default function Home() {
   }
 
   /**
-   * Direct-manipulation Requirement Chip removal (Handoff Spec's removable
-   * chip affordance) — distinct from the chat-driven refinement path:
-   * touches only the one targeted tier/value, emits `requirement_removed`
-   * (not `requirement_refined`), and posts only an agent acknowledgment —
-   * no user chat bubble, since the person acted directly, not through the
-   * composer. Restoring a removed requirement stays a normal chat/composer
-   * edit; no dedicated Undo control.
+   * Chip removal — X means "CampOps, don't assume this anymore", for every
+   * trip chip, literal or derived. The chip's semantic source is cleared
+   * from the trip at once (`clearChipSource`: "Capacity for 10" clears the
+   * party size, "In San Antonio" the destination, …); nothing else changes.
+   * Then CampOps decides, through the existing search prerequisites, whether
+   * it can still search:
+   *  - yes → the user-initiated recommendation transition (as "Show me
+   *    another option"): Working, then a fresh result set for the relaxed
+   *    request;
+   *  - no (destination, dates or party size now unknown) → the old
+   *    recommendation is withdrawn and the existing clarification asks for
+   *    the missing value; answering it runs a fresh search.
+   * Every removal is acknowledged in the conversation and recorded in
+   * Activity; overlapping searches supersede each other but never undo a
+   * removal.
    */
-  function handleRemoveRequirement(key: keyof TripIntent, value: string) {
-    const tier = TIER_SECTIONS.find((s) => s.key === key)?.tier;
-    if (!tier) return;
-    const { intent: nextIntent, changed } = removeRequirement(
-      intent,
-      key,
-      value,
-    );
-    if (!changed) return;
-
-    pushEvent(deriveRequirementRemovedEvent(tier, value));
+  async function handleRemoveTripDetail(source: ChipSource, label: string) {
+    const nextIntent = clearChipSource(intent, source);
+    if (JSON.stringify(nextIntent) === JSON.stringify(intent)) return;
+    const shown = rawRequirementLabel(label);
+    if (source.kind === "requirement") {
+      const tier = TIER_SECTIONS.find((s) => s.key === source.key)?.tier;
+      if (tier) pushEvent(deriveRequirementRemovedEvent(tier, source.value));
+    } else {
+      pushEvent(deriveTripDetailRemovedEvent(shown));
+    }
     intentGenerationRef.current++;
     setIntent(nextIntent);
 
-    pushEvent(deriveEvaluationPerformedEvent(unavailableIds));
-    const result = evaluateCampsites(nextIntent, unavailableIds);
+    const availabilityBacked = pendingSearchMissing
+      ? pendingSearchAvailabilityBacked
+      : (currentRequestAvailabilityBacked ?? true);
+    const required: PrerequisiteKind[] = [
+      ...explicitSearchRequirements(pendingSearchMissing),
+      ...(source.kind === "destination" ? (["destination"] as const) : []),
+      ...(source.kind === "party_size" ? (["guest_count"] as const) : []),
+    ];
+    const prereq = checkSearchPrerequisites(nextIntent, { availabilityBacked, required });
+
+    if (prereq.status === "missing_prerequisites") {
+      // Required information is now unknown: never search on stale or
+      // invented values, and don't keep showing a recommendation for a
+      // request that no longer exists.
+      cancelRecommendationQuery();
+      setEvaluation(null);
+      setCandidateIndex(0);
+      setRecommendationOrigin("initial");
+      firstCandidateOriginRef.current = "initial";
+      pushChat("agent", `Removed "${shown}".`);
+      // One question at a time: re-ask only if the question itself changes
+      // (later gaps are asked in turn once this one is answered).
+      if (JSON.stringify(pendingSearchMissing) !== JSON.stringify(prereq.missing)) {
+        pushEvent(derivePrerequisiteMissingEvent(prereq.missing));
+      }
+      if (pendingSearchMissing?.[0] !== prereq.missing[0]) {
+        pushAttention("clarification", "Needs your input", questionFor(prereq.missing, "search"));
+      }
+      setPendingSearchMissing(prereq.missing);
+      setPendingSearchAvailabilityBacked(availabilityBacked);
+      setCurrentRequestAvailabilityBacked(availabilityBacked);
+      return;
+    }
+
+    // The search can still run. Acknowledge now (every removal keeps its
+    // own acknowledgment, even if its search is superseded), without
+    // scrolling the conversation — the new result is what to look at.
+    suppressRevealRef.current = "all";
+    pushChat("agent", `Removed "${shown}" — no longer treating it as a requirement.`);
+    const query = beginRecommendationQuery("recommendation");
+    const excluded = unavailableIds;
+    const result = await simulateCampsiteQuery(() => evaluateCampsites(nextIntent, excluded));
+    if (!finishRecommendationQuery(query)) return;
+    pushEvent(deriveEvaluationPerformedEvent(excluded));
     setEvaluation(result);
     setCandidateIndex(0);
     setRecommendationOrigin("initial");
-    pushChat("agent", `Removed "${value}" — no longer treating it as a requirement.`);
+    firstCandidateOriginRef.current = "initial";
+    // No Match recovery lives in the conversation, so that one is revealed.
+    if (result.kind !== "no_match") suppressRevealRef.current = "all";
     pushEvent(deriveRecommendationSelectedEvent(result));
     announceEvaluation(result);
   }
@@ -958,10 +1189,19 @@ export default function Home() {
    * the currently active candidate unavailable, re-evaluates the remaining
    * set against the SAME (unmutated) TripIntent, and presents the loss and
    * the adapted pick together as two agent messages in one interaction.
+   *
+   * System-initiated, so the EXPLANATION is what gets revealed: the
+   * "Availability changed" card is scrolled into view above the composer
+   * (conversation column on desktop, the shared plane on mobile); the
+   * recommendation panel transitions on its own — on desktop its own
+   * scroll region resets independently, on mobile the view is never pulled
+   * away from the explanation, and the replacement simply becomes
+   * available below it.
    */
-  function handleSimulateAvailabilityLoss() {
-    if (!activeCandidate) return;
+  async function handleSimulateAvailabilityLoss() {
+    if (recommendationQueryActiveRef.current || !activeCandidate) return;
     const lost = activeCandidate;
+    const query = beginRecommendationQuery("explanation");
 
     pushEvent(deriveAvailabilityChangedEvent(lost));
     pushEvent(deriveCandidateExcludedEvent(lost));
@@ -970,27 +1210,31 @@ export default function Home() {
     nextUnavailable.add(lost.campsite.id);
     setUnavailableIds(nextUnavailable);
 
-    pushEvent(deriveEvaluationPerformedEvent(nextUnavailable));
-    const adapted = evaluateCampsites(intent, nextUnavailable);
-    setEvaluation(adapted);
-    setCandidateIndex(0);
-    setRecommendationOrigin("adapted");
-    pushEvent(deriveReplacementSelectedEvent(adapted, 0));
-
     // Availability-loss recovery correction (Search Truth correction,
     // 2026-09-02 — see docs/implementation-decisions.md): the approved
     // design treats this as a dedicated attention/recovery state, not
-    // ordinary chat — the shared AttentionCard states the loss, and the
-    // agent's following message presents the adapted pick (Pages v2
-    // redesign: card + explanation, rather than one combined card), both in
-    // the same recovery interaction. The adapted candidate itself is
-    // already visible via `evaluation`/`activeCandidate` in the Trip Panel.
-    const { lossMessage, adaptedMessage } = buildRecoveryMessages(
-      lost,
-      adapted,
+    // ordinary chat — the shared AttentionCard states the loss (known
+    // immediately), and once the replacement query resolves the agent's
+    // following message presents the adapted pick, which the Trip Panel
+    // shows via `evaluation`/`activeCandidate`. The card is revealed by the
+    // normal new-message reveal (not suppressed).
+    pushAttention("availability_loss", "Availability changed", buildLossMessage(lost));
+
+    pushEvent(deriveEvaluationPerformedEvent(nextUnavailable));
+    const adapted = await simulateCampsiteQuery(() =>
+      evaluateCampsites(intent, nextUnavailable),
     );
-    pushAttention("availability_loss", "Availability changed", lossMessage);
-    pushChat("agent", adaptedMessage);
+    if (!finishRecommendationQuery(query)) return;
+    setEvaluation(adapted);
+    setCandidateIndex(0);
+    setRecommendationOrigin("adapted");
+    firstCandidateOriginRef.current = "adapted";
+    pushEvent(deriveReplacementSelectedEvent(adapted, 0));
+    // Mobile: don't move the view off the explanation when the replacement
+    // arrives. Desktop: the conversation reveals it like any reply (the
+    // panel is a separate scroll region).
+    suppressRevealRef.current = "mobile";
+    pushChat("agent", buildRecoveryMessages(lost, adapted).adaptedMessage);
   }
 
   /**
@@ -999,19 +1243,17 @@ export default function Home() {
    * count and dates) and switches to the Reservation Review screen — not a
    * chat acknowledgment standing in for booking state.
    *
-   * Deterministic Action Prerequisites (2026-09-01): a reservation must
-   * never be staged without concrete check-in/check-out dates — "Book that
-   * one" about a search that never included dates is refused here,
-   * deterministically, not left to whether the model happened to notice.
-   * `checkBookingDatePrerequisites` reads only real TripIntent fields; if
-   * dates are missing, staging is skipped entirely (the candidate stays
-   * exactly as selected) and `pendingBookingDatesRequest` remembers to
-   * finish this same Accept automatically once dates arrive, so the user
-   * asks once, not twice.
+   * Conversation owns reservation readiness: a reservation is never staged
+   * until everything it needs apart from payment is known — real dates AND
+   * the party size. `checkBookingPrerequisites` reads only real TripIntent
+   * fields; if anything is missing, staging is skipped (the candidate stays
+   * exactly as selected), CampOps asks for it as an ordinary clarification,
+   * and `pendingBookingRequest` finishes this same Choose automatically once
+   * the answer arrives, so the user asks once, not twice.
    */
   function handleAccept() {
     if (!activeCandidate) return;
-    const prereq = checkBookingDatePrerequisites(intent);
+    const prereq = checkBookingPrerequisites(intent);
     if (prereq.status === "missing_prerequisites") {
       pushEvent(derivePrerequisiteMissingEvent(prereq.missing));
       pushAttention(
@@ -1019,66 +1261,200 @@ export default function Home() {
         "Needs your input",
         questionFor(prereq.missing, "booking"),
       );
-      setPendingBookingDatesRequest(true);
+      setPendingBookingRequest(true);
       return;
     }
     finishAccept(activeCandidate, intent);
   }
 
   /** The actual staging transition — factored out so a resolved
-   * `pendingBookingDatesRequest` can complete the same Accept the user
+   * `pendingBookingRequest` can complete the same Choose the user
    * already asked for, without re-deriving a `recommendation_accepted`
    * event for a click that never happened a second time. */
   function finishAccept(candidate: Candidate, forIntent: TripIntent) {
     pushEvent(deriveRecommendationAcceptedEvent(candidate));
     const { reservation: staged, event } = stageReservation(
       candidate.campsite,
-      forIntent.guestCount,
       // Non-null by construction: only reachable after
-      // checkBookingDatePrerequisites reports "actionable".
+      // checkBookingPrerequisites reports "actionable".
+      forIntent.guestCount as number,
       forIntent.checkIn as string,
       forIntent.checkOut as string,
+      savedPaymentMethod,
     );
     updateReservation(staged);
     pushEvent(event);
     setView("reservation");
   }
 
-  function handleRequestAlternative() {
-    if (!canRequestAlternative || !evaluation) return;
+  async function handleRequestAlternative() {
+    if (recommendationQueryActiveRef.current || !canRequestAlternative || !evaluation) return;
+    const query = beginRecommendationQuery("recommendation");
     pushEvent(deriveAlternativeRequestedEvent());
-    const nextIndex = candidateIndex + 1;
+    const current = evaluation;
+    const nextIndex = await simulateCampsiteQuery(() => candidateIndex + 1);
+    if (!finishRecommendationQuery(query)) return;
     setCandidateIndex(nextIndex);
     setRecommendationOrigin("alternative");
-    pushEvent(deriveReplacementSelectedEvent(evaluation, nextIndex));
+    pushEvent(deriveReplacementSelectedEvent(current, nextIndex));
     // Conversational acknowledgment of the request (Pages v2 Alternative
     // frames) — names only the real next candidate, no invented claims.
-    const next = evaluation.candidates[nextIndex].campsite;
+    const next = current.candidates[nextIndex].campsite;
+    suppressRevealRef.current = "all";
     pushChat(
       "agent",
       `Sure — here's another option: ${next.siteName} at ${next.campgroundName}.`,
     );
   }
 
-  function handleReserveAttempt() {
-    if (!reservation) return;
-    const { reservation: next, event } = transitionReservation(reservation, {
-      type: "RESERVE_ATTEMPT",
-    });
-    updateReservation(next);
-    pushEvent(event);
+  /** Final option reached → "Start over with the first option": cycles back
+   * to the first recommendation of the SAME result set (no new search, no
+   * requirement change), through the same transition as another option. */
+  async function handleRestartOptions() {
+    if (recommendationQueryActiveRef.current || !evaluation || candidateIndex === 0) return;
+    const query = beginRecommendationQuery("recommendation");
+    const current = evaluation;
+    const firstIndex = await simulateCampsiteQuery(() => 0);
+    if (!finishRecommendationQuery(query)) return;
+    setCandidateIndex(firstIndex);
+    setRecommendationOrigin(firstCandidateOriginRef.current);
+    const first = current.candidates[firstIndex];
+    pushEvent(deriveFirstOptionRequestedEvent(first));
+    suppressRevealRef.current = "all";
+    pushChat(
+      "agent",
+      `Here's the first option again: ${first.campsite.siteName} at ${first.campsite.campgroundName}.`,
+    );
   }
 
-  function handleAddPaymentMethod() {
-    // Mocked payment method on file — no real payment integration (PRD §9 /
-    // Build Brief: no real payment processing for this POC).
+  /**
+   * Recommendation transition: a real transient state that a live async
+   * query could drive. `reveal` says what the user should see:
+   *  - "recommendation" (user-initiated — Show me another option, Start
+   *    over): the panel is reset to the top first — while the current card
+   *    is still laid out, so it can actually scroll there — then the loading
+   *    state replaces the card, and the result appears at the top.
+   *  - "explanation" (system-initiated — availability change): on mobile
+   *    the shared plane is left for the explanation message to claim; on
+   *    desktop only the panel's own scroll region resets.
+   * Returns the query's token; any later trip change supersedes it (see
+   * cancelRecommendationQuery).
+   */
+  function beginRecommendationQuery(reveal: "recommendation" | "explanation"): number {
+    transitionRevealRef.current = reveal;
+    // Mobile, explanation-first: hold the panel at its current height while
+    // it loads, so the shared plane doesn't shrink (and the browser doesn't
+    // clamp its scroll position) underneath the explanation being revealed.
+    const panel = tripPanelRef.current;
+    if (panel && reveal === "explanation" && !window.matchMedia("(min-width: 1024px)").matches) {
+      panel.style.minHeight = `${panel.offsetHeight}px`;
+    }
+    scrollTripPanelToTop();
+    // Re-pin once the loading state has rendered (its height differs).
+    pinPanelTopAfterRenderRef.current = true;
+    recommendationQueryActiveRef.current = true;
+    setRecommendationLoading(true);
+    recommendationQueryRef.current += 1;
+    return recommendationQueryRef.current;
+  }
+
+  /** Ends the transition if `query` is still the current one; false means
+   * it was superseded and its result must be discarded. */
+  function finishRecommendationQuery(query: number): boolean {
+    if (query !== recommendationQueryRef.current) return false;
+    recommendationQueryActiveRef.current = false;
+    releasePanelHeight();
+    setRecommendationLoading(false);
+    // Keep the new campsite pinned at the top once it has rendered.
+    pinPanelTopAfterRenderRef.current = true;
+    return true;
+  }
+
+  function cancelRecommendationQuery() {
+    recommendationQueryRef.current += 1;
+    recommendationQueryActiveRef.current = false;
+    releasePanelHeight();
+    setRecommendationLoading(false);
+  }
+
+  function releasePanelHeight() {
+    if (tripPanelRef.current) tripPanelRef.current.style.minHeight = "";
+  }
+
+  /** Scrolls only the recommendation panel's own scroll region: the Trip
+   * Panel on desktop (the conversation column is untouched), or — on
+   * mobile, where the panel sits inline in the single content plane — that
+   * plane, just far enough to bring the panel's top to the top. On mobile a
+   * system-initiated ("explanation") transition never scrolls the plane:
+   * the explanation message owns the view there. */
+  function scrollTripPanelToTop() {
+    const panel = tripPanelRef.current;
+    if (!panel) return;
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      panel.scrollTop = 0;
+      return;
+    }
+    if (transitionRevealRef.current === "explanation") return;
+    const plane = contentPlaneRef.current;
+    if (!plane) return;
+    plane.scrollTop +=
+      panel.getBoundingClientRect().top - plane.getBoundingClientRect().top;
+  }
+
+  // After a recommendation transition resolves, keep the new campsite at
+  // the top of the panel once it has actually rendered (its height differs
+  // from the loading state's).
+  useEffect(() => {
+    if (!pinPanelTopAfterRenderRef.current) return;
+    pinPanelTopAfterRenderRef.current = false;
+    scrollTripPanelToTop();
+  });
+
+  function applyReservationEvent(event: ReservationEvent) {
     if (!reservation) return;
-    const { reservation: next, event } = transitionReservation(reservation, {
-      type: "ADD_PAYMENT_METHOD",
-      label: "Visa •••• 4471",
-    });
+    const { reservation: next, event: taskEvent } = transitionReservation(reservation, event);
     updateReservation(next);
-    pushEvent(event);
+    pushEvent(taskEvent);
+  }
+
+  /** Save payment method — mocked: no real payment integration (PRD §9 /
+   * Build Brief: no real payment processing for this POC). */
+  function handleSavePaymentMethod(label: string) {
+    applyReservationEvent({ type: "ADD_PAYMENT_METHOD", label });
+    setSavedPaymentMethod(label);
+  }
+
+  /** Cancel reservation, after its confirmation dialog: discards the staged
+   * (uncharged) reservation and returns to the conversation, where the trip
+   * and the recommendation are still in place. */
+  function handleCancelReservation() {
+    if (!reservation) return;
+    pushEvent(discardStagedReservation(reservation, "cancelled"));
+    const { siteName, campgroundName } = reservation.campsite;
+    updateReservation(null);
+    setView("search");
+    pushChat(
+      "agent",
+      `I've cancelled the staged reservation for ${siteName} at ${campgroundName}. Nothing was charged — the recommendation is still here if you change your mind.`,
+    );
+  }
+
+  /** Edit reservation: deliberate, user-initiated trip editing (not
+   * missing-information recovery). Sets the staged reservation aside and
+   * returns to the conversation with the trip, search and recommendation
+   * intact, inviting the change. The composer is focused within the same tap
+   * — like "Change my requirements", so the mobile keyboard opens for it. */
+  function handleEditReservation() {
+    if (!reservation) return;
+    pushEvent(discardStagedReservation(reservation, "editing"));
+    updateReservation(null);
+    setEditingTrip(true);
+    pushChat(
+      "agent",
+      "Sure — what would you like to change? Your trip details and the current recommendation are kept; tell me what's different and I'll update them.",
+    );
+    flushSync(() => setView("search"));
+    composerInputRef.current?.focus();
   }
 
   function clearAuthorizeTimeout() {
@@ -1088,7 +1464,8 @@ export default function Home() {
     }
   }
 
-  /** Dialog's own "Reserve Site X — $Y" click: begins the simulated commit. */
+  /** Confirm's own "Reserve Site X — $Y" click: the explicit authorization.
+   * Enters Processing, then the simulated charge resolves to Confirmed. */
   function handleBeginAuthorize() {
     if (!reservation) return;
     const { reservation: next, event } = transitionReservation(reservation, {
@@ -1118,12 +1495,7 @@ export default function Home() {
 
   function handleCancelAuthorization() {
     clearAuthorizeTimeout();
-    if (!reservation) return;
-    const { reservation: next, event } = transitionReservation(reservation, {
-      type: "CANCEL_AUTHORIZATION",
-    });
-    updateReservation(next);
-    pushEvent(event);
+    applyReservationEvent({ type: "CANCEL_AUTHORIZATION" });
   }
 
   function handleOpenActivity() {
@@ -1134,12 +1506,16 @@ export default function Home() {
     // "search" is the only origin today — every screen with the persistent
     // trip panel is the search view; Reservation/Authorize/Confirmed have
     // no Trip Panel and no "View activity" entry point per live Figma.
+    // Returns to the normal conversation state: on mobile the Your Trip
+    // sheet stays collapsed (Activity is launched from the Mobile Status
+    // Bar, not from inside Your Trip, so there is no sheet to restore).
     setView("search");
   }
 
   /** Full task reset (Closing's "Start a new search") — no prior state leaks into the new trip. */
   function handleStartNewSearch() {
     clearAuthorizeTimeout();
+    cancelRecommendationQuery();
     setMessages([]);
     setEvents([]);
     setDraft("");
@@ -1147,6 +1523,7 @@ export default function Home() {
     setEvaluation(null);
     setCandidateIndex(0);
     setRecommendationOrigin("initial");
+    firstCandidateOriginRef.current = "initial";
     setSeenTripKey(tripStateKey(EMPTY_TRIP_INTENT));
     setShowTripDetailsSheet(false);
     setUnavailableIds(new Set());
@@ -1156,12 +1533,14 @@ export default function Home() {
     setPendingSearchMissing(null);
     setPendingSearchAvailabilityBacked(true);
     setCurrentRequestAvailabilityBacked(null);
-    setPendingBookingDatesRequest(false);
+    setPendingBookingRequest(false);
     setDateAskAttempts(0);
     setPendingRecommendationReadiness(false);
     setTripEstablished(false);
     intentGenerationRef.current = 0;
     updateReservation(null);
+    setSavedPaymentMethod(null);
+    setEditingTrip(false);
     setView("search");
   }
 
@@ -1182,14 +1561,26 @@ export default function Home() {
   // it's revealed with its end just clear of the composer; if not, its
   // start is aligned to the top. Returning from Activity jumps to the end.
   useEffect(() => {
-    if (view !== "search") {
-      revealedMessageCountRef.current = 0;
-      return;
-    }
+    // Away from the conversation (Reservation, Activity) the seen-count is
+    // kept, so coming back reveals only what was added meanwhile — e.g. the
+    // Edit/Cancel reservation message — or, with nothing new, the latest one.
+    if (view !== "search") return;
     const list = messageListRef.current;
     const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
-    const scroller = isDesktop ? list : contentPlaneRef.current;
+    const scroller = isDesktop
+      ? chatColumnRef.current
+      : contentPlaneRef.current;
     if (!list || !scroller || messages.length === 0) return;
+    // Messages a recommendation transition marks as not-to-reveal are
+    // recorded as seen without scrolling: "all" for user-initiated changes
+    // (the result is what to look at), "mobile" for the replacement after an
+    // availability change (the view stays on the explanation there).
+    const suppress = suppressRevealRef.current;
+    suppressRevealRef.current = null;
+    if (suppress === "all" || (suppress === "mobile" && !isDesktop)) {
+      revealedMessageCountRef.current = messages.length;
+      return;
+    }
 
     const firstNewIndex = Math.min(
       revealedMessageCountRef.current,
@@ -1201,9 +1592,12 @@ export default function Home() {
     if (!first || !last) return;
 
     const GAP = 16;
-    // Mobile: the floating composer + grab bar cover the plane's bottom.
-    const obscuredBottom = isDesktop ? 0 : 140;
+    // The composer's fade bar is layered over the bottom of the scroll
+    // region at every width (sticky on desktop, fixed with the grab bar
+    // on mobile), so new content must clear it.
     const view_ = scroller.getBoundingClientRect();
+    const bar = composerBarRef.current?.getBoundingClientRect();
+    const obscuredBottom = bar ? Math.max(0, view_.bottom - bar.top) : 0;
     const top = view_.top + GAP;
     const bottom = view_.bottom - obscuredBottom - GAP;
     const firstTop = first.getBoundingClientRect().top;
@@ -1300,11 +1694,11 @@ export default function Home() {
       <div className="flex min-h-screen flex-col bg-background">
         <Header onLogoClick={handleStartNewSearch} />
         <main className="flex-1">
-          <div className="mx-auto flex w-[560px] max-w-full flex-col items-start gap-6 px-4 pt-16 lg:px-0 lg:pt-24">
+          <div className="mx-auto flex w-[560px] max-w-full flex-col items-start gap-6 px-6 py-4 lg:px-0 lg:py-8">
             <button
               type="button"
               onClick={handleBackToTrip}
-              className={`${text.labelMd} cursor-pointer text-muted-foreground`}
+              className={`${text.labelSm} cursor-pointer text-muted-foreground`}
             >
               ‹ Back to trip
             </button>
@@ -1360,117 +1754,114 @@ export default function Home() {
         <main className="flex-1">
           <ReservationReview
             reservation={reservation}
-            missingFields={computeMissingFields(reservation)}
-            onReserveAttempt={handleReserveAttempt}
-            onAddPaymentMethod={handleAddPaymentMethod}
+            onAddPaymentMethod={() => applyReservationEvent({ type: "BEGIN_ADD_PAYMENT" })}
+            onCancelAddPayment={() => applyReservationEvent({ type: "CANCEL_ADD_PAYMENT" })}
+            onSavePaymentMethod={handleSavePaymentMethod}
+            onContinueToConfirmation={() => applyReservationEvent({ type: "CONTINUE_TO_CONFIRMATION" })}
+            onCancelConfirmation={handleCancelAuthorization}
+            onAuthorize={handleBeginAuthorize}
+            onEditReservation={handleEditReservation}
+            onCancelReservation={handleCancelReservation}
           />
         </main>
-        <AuthorizeBookingDialog
-          reservation={reservation}
-          onCancel={handleCancelAuthorization}
-          onAuthorize={handleBeginAuthorize}
-        />
       </div>
     );
   }
 
   if (!hasStarted) {
     return (
-      <div className="flex h-dvh flex-col bg-background">
+      <div className="fixed inset-x-0 top-[var(--app-top,0px)] flex h-[var(--app-height,100dvh)] flex-col bg-background">
         <Header onLogoClick={handleStartNewSearch} />
         <main className="relative min-h-0 flex-1">
           <CampIllustration />
-          <div className="absolute inset-0 overflow-y-auto">
-            {/* Pages v2 Start: frosted hero card upper-left, composer low
-                and centered. Viewport-relative spacing, not the 1024px
-                frame's literal offsets. */}
-            <div className="flex min-h-full flex-col px-7 pt-[clamp(24px,14dvh,117px)] pb-8 lg:px-[100px] lg:pt-[clamp(32px,22dvh,209px)] lg:pb-[clamp(32px,18dvh,180px)]">
-              <div className="flex w-full max-w-[663px] flex-col gap-6 rounded-md bg-card/50 p-6 lg:rounded-lg">
-                <h1
-                  className={`${text.displayH1} text-water lg:text-[48px] lg:leading-[1.1]`}
-                >
-                  Your next campsite, without the search grind
-                </h1>
-                <p className={`${text.bodyLg} text-foreground`}>
-                  Tell CampOps about your trip — dates, dealbreakers,
-                  tradeoffs you&rsquo;re willing to make — and let it find the
-                  fit.
-                </p>
-              </div>
-              <div className="min-h-8 flex-1" />
-              <div className="mx-auto flex w-full max-w-[720px] flex-col items-center gap-3">
-                <Composer
-                  ref={composerInputRef}
-                  value={draft}
-                  onChange={setDraft}
-                  onSubmit={handleSubmit}
-                  isWorking={isWorking}
-                />
-                {/* Unobtrusive prototype disclaimer — small, muted, shown
-                    only on the landing screen. */}
-                <p
-                  className={`${text.caption} max-w-[480px] text-center text-muted-foreground`}
-                >
-                  CampOps is a product design prototype. Campground
-                  inventory, availability, pricing, payments, and
-                  reservations are simulated.
-                </p>
-              </div>
+          {/* Pages v2 Start: frosted hero card upper-left, composer low and
+              centered. The spacing above, between and below is made of
+              flexible spacers (Figma's offsets as their preferred sizes)
+              inside a definite-height flex column, so they shrink before
+              anything overflows: no scrolling whenever the content fits —
+              not even a sub-pixel rounding scroll — while a genuinely short
+              viewport still scrolls instead of clipping. */}
+          <div
+            ref={startScrollerRef}
+            className="absolute inset-0 flex flex-col overflow-y-auto px-7 lg:px-[100px]"
+          >
+            <div aria-hidden="true" className="h-[117px] min-h-6 lg:h-[209px] lg:min-h-8" />
+            <div className="flex w-full max-w-[663px] shrink-0 flex-col gap-6 rounded-md bg-card/50 p-6 lg:rounded-lg">
+              <h1
+                className={`${text.displayH1} text-water lg:text-[48px] lg:leading-[1.1]`}
+              >
+                Your next campsite, without the search grind
+              </h1>
+              <p className={`${text.bodyLg} text-foreground`}>
+                Tell CampOps about your trip — dates, dealbreakers,
+                tradeoffs you&rsquo;re willing to make — and let it find the
+                fit.
+              </p>
             </div>
+            <div aria-hidden="true" className="min-h-8 flex-1" />
+            <div className="mx-auto flex w-full max-w-[720px] shrink-0 flex-col items-center gap-3">
+              <Composer
+                ref={composerInputRef}
+                value={draft}
+                onChange={setDraft}
+                onSubmit={handleSubmit}
+                isWorking={isWorking}
+              />
+              {/* Unobtrusive prototype disclaimer — small, muted, shown
+                  only on the landing screen. */}
+              <p
+                className={`${text.caption} max-w-[480px] text-center text-muted-foreground`}
+              >
+                CampOps is a product design prototype. Campground
+                inventory, availability, pricing, payments, and
+                reservations are simulated.
+              </p>
+            </div>
+            <div aria-hidden="true" className="h-8 min-h-4 lg:h-[180px] lg:min-h-8" />
           </div>
         </main>
       </div>
     );
   }
 
-  const viewActivityLink = (
-    <button
-      type="button"
-      onClick={handleOpenActivity}
-      className={`${text.bodySm} shrink-0 cursor-pointer whitespace-nowrap text-foreground underline ${
-        showCandidateCard && recommendationOrigin !== "alternative"
-          ? "lg:text-muted-foreground"
-          : ""
-      }`}
-    >
-      View activity
-    </button>
-  );
-
   return (
-    <div className="flex h-dvh flex-col bg-background">
+    <div className="fixed inset-x-0 top-[var(--app-top,0px)] flex h-[var(--app-height,100dvh)] flex-col bg-background">
       <Header onLogoClick={handleStartNewSearch} />
       {/* Handoff Spec 3: status changes are announced via a polite live
           region rather than by moving focus. */}
       <div aria-live="polite" className="sr-only">
         {statusAnnouncement}
       </div>
-      {/* Mobile-only collapsed trip status (Pages v2 Intent & Search mobile
-          frames) — shown while there's no candidate to present inline. */}
-      {!showCandidateCard && (
-        <TripStatusBar
-          label={tripStatus.label}
-          onViewDetails={() => handleTripSheetOpenChange(true)}
-        />
-      )}
+      {/* DS Mobile Status Bar (Pages v2: every mobile conversation state,
+          including recommendations) — the one live status Badge for the
+          current view, plus the trip-details action. */}
+      <TripStatusBar
+        status={currentStatus}
+        onViewDetails={() => handleTripSheetOpenChange(true)}
+        onViewActivity={handleOpenActivity}
+      />
       {/* Bounded workspace. Desktop: two side-by-side regions that scroll
-          independently (conversation | trip panel), composer pinned to the
-          bottom of the conversation column. Mobile: one scrolling content
-          plane (conversation + inline recommendation); the composer and the
+          independently (conversation | trip panel); the composer's fade bar
+          is sticky over the bottom of the conversation column so messages
+          scroll behind it. Mobile: one scrolling content plane
+          (conversation + inline recommendation); the composer bar and the
           Your Trip grab bar float above it as fixed foreground UI, with
           trailing padding so the last content can scroll clear of them. */}
       <main className="relative flex min-h-0 flex-1">
         <CampIllustration />
         <div
           ref={contentPlaneRef}
-          className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-36 lg:flex-row lg:overflow-hidden lg:pb-0"
+          className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pb-[calc(9rem+var(--safe-bottom))] max-lg:in-data-[keyboard-open]:pb-[100px] lg:flex-row lg:overflow-hidden lg:pb-0"
         >
-          <section className="flex flex-col gap-4 px-6 pt-4 lg:min-h-0 lg:min-w-0 lg:flex-1 lg:p-6">
+          <section
+            ref={chatColumnRef}
+            className="scroll-region flex flex-col px-6 pt-4 lg:min-h-0 lg:min-w-0 lg:flex-1 lg:overflow-y-auto lg:p-0"
+          >
             {/* Direct children are exactly the messages, in order — the
                 reveal-on-new-message effect indexes into them. */}
             <div
               ref={messageListRef}
-              className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto [&>*]:shrink-0"
+              className="flex flex-col gap-4 lg:flex-[1_0_auto] lg:px-6 lg:pt-6 [&>*]:shrink-0"
             >
               {messages.map((m, i) => {
                 const isLatest = i === messages.length - 1;
@@ -1489,13 +1880,24 @@ export default function Home() {
                 );
               })}
             </div>
-            <div className="max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-20 max-lg:h-[126px] max-lg:bg-linear-to-b max-lg:from-surface-fade/0 max-lg:to-surface-fade max-lg:to-50% max-lg:p-4 lg:shrink-0">
+            {/* Pages v2 "Sticky Composer Bar": the same fade-to-surface
+                layer at every width — fixed above the content plane on
+                mobile, sticky at the bottom of the conversation column on
+                desktop (where the column's own scrollbar stays beside it).
+                While the mobile software keyboard is open the Your Trip grab
+                bar is hidden, so this layer shrinks to sit directly on the
+                keyboard (Pages v2 "Keyboard open — Mobile": 84px). */}
+            <div
+              ref={composerBarRef}
+              className="bg-linear-to-b from-surface-fade/0 to-surface-fade to-50% p-4 max-lg:fixed max-lg:inset-x-0 max-lg:bottom-[calc(var(--keyboard-inset,0px)+var(--safe-bottom))] max-lg:z-20 max-lg:h-[126px] max-lg:in-data-[keyboard-open]:h-[84px] lg:sticky lg:bottom-0 lg:z-10 lg:shrink-0 lg:p-6"
+            >
               <Composer
                 ref={composerInputRef}
                 value={draft}
                 onChange={setDraft}
                 onSubmit={handleSubmit}
-                isWorking={isWorking}
+                isWorking={isWorking || recommendationLoading}
+                placeholder={editingTrip ? "Tell CampOps what to change..." : undefined}
               />
             </div>
           </section>
@@ -1506,32 +1908,46 @@ export default function Home() {
               Your Trip sheet. One width for every state so the composer
               never shifts when a recommendation arrives. */}
           <aside
-            className={`flex flex-col px-6 pb-6 lg:w-[clamp(400px,39vw,560px)] lg:shrink-0 lg:overflow-y-auto lg:bg-card/50 lg:p-6 [&>*]:shrink-0 ${
+            ref={tripPanelRef}
+            aria-busy={recommendationLoading}
+            className={`scroll-region flex flex-col px-6 pb-6 lg:w-[clamp(400px,39vw,560px)] lg:shrink-0 lg:overflow-y-auto lg:bg-card/50 lg:p-6 [&>*]:shrink-0 ${
               showCandidateCard ? "gap-4 pt-4 lg:pt-6" : "gap-3"
-            } ${showCandidateCard || error ? "" : "max-lg:hidden"}`}
+            } ${showCandidateCard || error ? "" : "max-lg:hidden"} ${
+              // While loading, the panel keeps at least a viewport of height
+              // on mobile so its top can stay pinned to the top of the plane.
+              recommendationLoading ? "max-lg:min-h-full" : ""
+            }`}
           >
             {showCandidateCard && activeCandidate ? (
               <>
-                {/* Panel Header — mobile stacks title over badge; desktop
-                    spreads title · badge · link across one row. */}
-                <div className="flex items-start justify-between gap-4 lg:items-center">
-                  <div className="flex flex-col items-start gap-1 lg:contents">
-                    <h2
-                      className={`${text.labelLg} text-card-foreground ${
-                        recommendationOrigin === "alternative"
-                          ? "lg:font-display lg:text-[32px] lg:leading-[1.25] lg:font-extrabold"
-                          : ""
-                      }`}
-                    >
-                      {candidateHeading.title}
-                    </h2>
-                    <Badge
-                      label={isWorking ? workingLabel : candidateHeading.badge}
-                      severity={isWorking ? "neutral" : candidateHeading.severity}
-                    />
-                  </div>
-                  {viewActivityLink}
-                </div>
+                {/* Panel Header — the status Badge and the Activity action
+                    show here on desktop only. On mobile (Pages v2) this
+                    header is title-only: the status and Activity both live
+                    in the Mobile Status Bar (including Working while the
+                    next campsite loads — shown once, not repeated here). */}
+                <PanelHeader
+                  title={candidateHeading.title}
+                  badge={currentStatus}
+                  badgeClassName="hidden lg:block"
+                  activityOnDesktopOnly
+                  onViewActivity={handleOpenActivity}
+                />
+
+                {/* Mobile loading content: says what CampOps is doing without
+                    repeating the Working badge, which the Mobile Status Bar
+                    shows as the single source of truth. Desktop has no
+                    Status Bar, so its Working badge stays in the header. */}
+                {recommendationLoading && (
+                  <p className={`${text.bodySm} text-muted-foreground lg:hidden`}>
+                    Finding another option…
+                  </p>
+                )}
+
+                {/* The current campsite (and its actions) is replaced while
+                    the next one is being found, so nothing stale can be
+                    chosen and no second recommendation action can start. */}
+                {!recommendationLoading && (
+                <>
 
                 {/* Real, deterministic fact (Figma's "Verified Row"): this
                     candidate passed evaluateCampsites' availability checks
@@ -1553,6 +1969,7 @@ export default function Home() {
                   </p>
                 )}
                 <CandidateCard
+                  photoSrc={campsitePhotoSrc(activeCandidate.campsite)}
                   location={activeCandidate.campsite.campgroundName}
                   siteName={activeCandidate.campsite.siteName}
                   siteType={activeCandidate.campsite.siteType}
@@ -1580,28 +1997,54 @@ export default function Home() {
                   preserved={activeCandidate.preserved}
                   compromises={activeCandidate.compromises}
                   explanation={activeCandidate.explanation}
-                  removableHardLabels={hardRequirementsSet}
-                  onRemoveRequirement={(label) =>
-                    handleRemoveRequirement("hardRequirements", label)
-                  }
+                  chipSourceFor={(label) => resolveChipSource(intent, label)}
+                  onRemoveChip={handleRemoveTripDetail}
                 />
 
+                {/* Result-set position — said in words, never by a disabled
+                    control, whenever a useful next action exists. */}
+                {(isOnlyMatch || isLastOfMatches) && (
+                  <p className={`${text.bodySm} text-foreground`}>
+                    {isOnlyMatch
+                      ? "This is the only site that matches your current search."
+                      : `That’s the last of ${matchCount} matches.`}
+                  </p>
+                )}
                 <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
                   <Button className="w-full lg:w-auto" onClick={handleAccept}>
-                    Choose {activeCandidate.campsite.siteName}
+                    Choose this site
                   </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full lg:w-auto"
-                    onClick={handleRequestAlternative}
-                    disabled={!canRequestAlternative}
-                  >
-                    Show me another option
-                  </Button>
+                  {canRequestAlternative && (
+                    <Button
+                      variant="outline"
+                      className="w-full lg:w-auto"
+                      onClick={handleRequestAlternative}
+                    >
+                      Show me another option
+                    </Button>
+                  )}
+                  {isLastOfMatches && (
+                    <Button
+                      variant="outline"
+                      className="w-full lg:w-auto"
+                      onClick={handleRestartOptions}
+                    >
+                      Start over with the first option
+                    </Button>
+                  )}
+                  {(isOnlyMatch || isLastOfMatches) && (
+                    <Button
+                      variant="outline"
+                      className="w-full lg:w-auto"
+                      onClick={handleChangeRequirement}
+                    >
+                      Change my requirements
+                    </Button>
+                  )}
                   <button
                     type="button"
                     onClick={handleRejectCandidate}
-                    className={`${text.bodySm} cursor-pointer self-center whitespace-nowrap text-foreground underline lg:self-auto lg:text-muted-foreground`}
+                    className={`${text.bodySm} cursor-pointer self-center whitespace-nowrap text-muted-foreground underline lg:self-auto`}
                   >
                     No thanks, I&rsquo;ll pass
                   </button>
@@ -1616,21 +2059,18 @@ export default function Home() {
                 >
                   Simulate: this site just became unavailable
                 </button>
+                </>
+                )}
               </>
             ) : (
               // Below lg this content lives in the Your Trip sheet instead
               // (same TripRequirementsList, same onRemove).
               <div className="hidden lg:contents">
-                <div className="flex items-center justify-between gap-4">
-                  <h2 className={`${text.displayH2} text-card-foreground`}>
-                    Your trip
-                  </h2>
-                  <Badge
-                    label={tripStatus.label}
-                    severity={tripStatus.severity}
-                  />
-                  {viewActivityLink}
-                </div>
+                <PanelHeader
+                  title="Your trip"
+                  badge={currentStatus}
+                  onViewActivity={handleOpenActivity}
+                />
                 {intent.goalStatement && (
                   <p className="font-sans text-[18px] leading-[1.45] text-muted-foreground">
                     &ldquo;{intent.goalStatement}&rdquo;
@@ -1638,7 +2078,7 @@ export default function Home() {
                 )}
                 <TripRequirementsList
                   intent={intent}
-                  onRemove={handleRemoveRequirement}
+                  onRemove={handleRemoveTripDetail}
                 />
               </div>
             )}
@@ -1653,8 +2093,7 @@ export default function Home() {
         onOpenChange={handleTripSheetOpenChange}
         changed={tripChangedUnseen}
         intent={intent}
-        onRemove={handleRemoveRequirement}
-        onViewActivity={handleOpenActivity}
+        onRemove={handleRemoveTripDetail}
       />
     </div>
   );

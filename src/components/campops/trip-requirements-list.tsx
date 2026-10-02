@@ -1,10 +1,10 @@
 import { RequirementChip } from "@/components/campops/requirement-chip";
-import { getDerivedRequirements } from "@/lib/requirements";
+import { getDerivedRequirements, type ChipSource, type RequirementKey } from "@/lib/requirements";
 import { text } from "@/lib/typography";
 import type { RequirementTier, TripIntent } from "@/lib/schemas";
 
 export const TIER_SECTIONS: {
-  key: keyof TripIntent;
+  key: RequirementKey;
   label: string;
   tier: RequirementTier;
 }[] = [
@@ -34,17 +34,16 @@ export const TIER_SECTIONS: {
  * facts are real evaluator-enforced hard constraints that never lived in
  * `hardRequirements` text to begin with (see that function's own doc
  * comment for why), so the panel previously showed only a subset of what
- * was actually active. Derived chips render with no `onRemove` — the same
- * "no removal path, not removable" treatment `RequirementChip` already
- * supports for the Candidate Card's synthetic checks — while literal
- * values keep their existing fully-removable behavior unchanged.
+ * was actually active. Every chip is removable: a literal value removes
+ * itself from its tier; a derived chip clears the field it comes from
+ * (party size, pets) — see `ChipSource`.
  */
 export function TripRequirementsList({
   intent,
   onRemove,
 }: {
   intent: TripIntent;
-  onRemove: (key: keyof TripIntent, value: string) => void;
+  onRemove: (source: ChipSource, label: string) => void;
 }) {
   const derived = getDerivedRequirements(intent);
   return (
@@ -61,14 +60,19 @@ export function TripRequirementsList({
             </span>
             <div className="flex flex-wrap gap-x-1 gap-y-2">
               {derivedForTier.map((d) => (
-                <RequirementChip key={d.label} label={d.label} tier={d.tier} />
+                <RequirementChip
+                  key={d.label}
+                  label={d.label}
+                  tier={d.tier}
+                  onRemove={() => onRemove(d.source, d.label)}
+                />
               ))}
               {values.map((v) => (
                 <RequirementChip
                   key={v}
                   label={v}
                   tier={tier}
-                  onRemove={() => onRemove(key, v)}
+                  onRemove={() => onRemove({ kind: "requirement", key, value: v }, v)}
                 />
               ))}
             </div>

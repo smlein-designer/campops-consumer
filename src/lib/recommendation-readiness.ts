@@ -9,7 +9,7 @@ import type { TripIntent } from "@/lib/schemas";
  *   1. Semantic understanding — IntentInterpretation.status
  *      ("Does the model understand the request?")
  *   2. Deterministic prerequisites — checkSearchPrerequisites /
- *      checkBookingDatePrerequisites (src/lib/prerequisites.ts)
+ *      checkBookingPrerequisites (src/lib/prerequisites.ts)
  *      ("Does the application have the facts an action objectively needs?")
  *   3. Recommendation readiness — THIS module
  *      ("Even once 1 and 2 are satisfied, is there enough structured intent

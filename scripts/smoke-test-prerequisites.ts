@@ -11,14 +11,15 @@
  */
 import { evaluateCampsites } from "../src/lib/evaluate";
 import {
-  checkBookingDatePrerequisites,
+  checkBookingPrerequisites,
+  parsePartySizeAnswer,
   checkSearchPrerequisites,
   hasOriginRelativeDistanceConstraint,
   isExploratoryDiscoveryMessage,
   isOriginRelativeDistanceLabel,
   questionFor,
 } from "../src/lib/prerequisites";
-import { stageReservation, transitionReservation } from "../src/lib/reservation";
+import { stageReservation } from "../src/lib/reservation";
 import { EMPTY_TRIP_INTENT, type TripIntent } from "../src/lib/schemas";
 
 let failures = 0;
@@ -241,13 +242,15 @@ run("A self-referential distance constraint is never marked satisfied, with or w
   }
 });
 
-// 5. checkBookingDatePrerequisites.
-run("checkBookingDatePrerequisites: both missing, one missing, both present", () => {
-  const neither: TripIntent = { ...EMPTY_TRIP_INTENT };
-  const onlyCheckIn: TripIntent = { ...EMPTY_TRIP_INTENT, checkIn: "Sept 12" };
-  const both: TripIntent = { ...EMPTY_TRIP_INTENT, checkIn: "Sept 12", checkOut: "Sept 14" };
+// 5. checkBookingPrerequisites — everything a reservation needs apart from
+//    payment (real dates AND party size) is resolved in the conversation
+//    before Choose may stage anything.
+run("checkBookingPrerequisites: dates, then party size", () => {
+  const neither: TripIntent = { ...EMPTY_TRIP_INTENT, guestCount: 4 };
+  const onlyCheckIn: TripIntent = { ...EMPTY_TRIP_INTENT, guestCount: 4, checkIn: "Sept 12" };
+  const both: TripIntent = { ...EMPTY_TRIP_INTENT, guestCount: 4, checkIn: "Sept 12", checkOut: "Sept 14" };
 
-  const r1 = checkBookingDatePrerequisites(neither);
+  const r1 = checkBookingPrerequisites(neither);
   assert(r1.status === "missing_prerequisites", "neither date present -> missing_prerequisites");
   if (r1.status === "missing_prerequisites") {
     assert(
@@ -256,7 +259,7 @@ run("checkBookingDatePrerequisites: both missing, one missing, both present", ()
     );
   }
 
-  const r2 = checkBookingDatePrerequisites(onlyCheckIn);
+  const r2 = checkBookingPrerequisites(onlyCheckIn);
   assert(r2.status === "missing_prerequisites", "only checkIn present -> still missing_prerequisites");
   if (r2.status === "missing_prerequisites") {
     assert(
@@ -265,7 +268,45 @@ run("checkBookingDatePrerequisites: both missing, one missing, both present", ()
     );
   }
 
-  assert(checkBookingDatePrerequisites(both).status === "actionable", "both dates present -> actionable");
+  assert(checkBookingPrerequisites(both).status === "actionable", "dates + party size present -> actionable (no unnecessary clarification)");
+});
+
+run("checkBookingPrerequisites: a trip without party size cannot enter the reservation flow", () => {
+  const noParty: TripIntent = { ...EMPTY_TRIP_INTENT, checkIn: "Sept 12", checkOut: "Sept 14" };
+  const r = checkBookingPrerequisites(noParty);
+  assert(
+    r.status === "missing_prerequisites" && r.missing.length === 1 && r.missing[0] === "guest_count",
+    `missing party size alone blocks Choose — got ${JSON.stringify(r)}`,
+  );
+  if (r.status === "missing_prerequisites") {
+    assert(/how many people/i.test(questionFor(r.missing, "booking")), "CampOps asks for the party size conversationally");
+  }
+  const neitherNorParty = checkBookingPrerequisites({ ...EMPTY_TRIP_INTENT });
+  assert(
+    neitherNorParty.status === "missing_prerequisites" &&
+      neitherNorParty.missing[0] === "check_in_date" &&
+      neitherNorParty.missing.at(-1) === "guest_count",
+    "with dates also missing, dates are asked first and party size after",
+  );
+  assert(
+    checkBookingPrerequisites({ ...noParty, guestCount: 4 }).status === "actionable",
+    "supplying the party size makes the reservation path available",
+  );
+});
+
+run("parsePartySizeAnswer reads replies to the party-size question", () => {
+  const cases: [string, number | null][] = [
+    ["4", 4],
+    ["4 people", 4],
+    ["We're 6", 6],
+    ["four of us", 4],
+    ["just me", 1],
+    ["not sure yet", null],
+    ["0", null],
+  ];
+  for (const [reply, expected] of cases) {
+    assert(parsePartySizeAnswer(reply) === expected, `"${reply}" -> ${expected} (got ${parsePartySizeAnswer(reply)})`);
+  }
 });
 
 // 6. "Book this" with no dates cannot reach a booking-ready reservation —
@@ -283,7 +324,7 @@ run("stageReservation records the user's actual stated dates, not a campsite def
   const top = result.candidates[0];
   const { reservation } = stageReservation(
     top.campsite,
-    intent.guestCount,
+    intent.guestCount as number,
     intent.checkIn as string,
     intent.checkOut as string,
   );
@@ -294,35 +335,24 @@ run("stageReservation records the user's actual stated dates, not a campsite def
   );
 });
 
-// 7. Reservation cannot reach ready_for_authorization/reserved without the
-//    full set of minimum booking prerequisites (dates + guest count +
-//    payment method) — the NEW date requirement composes with the
-//    EXISTING guest-count/payment-method gate, not a parallel mechanism.
-run("Full minimum-booking-prerequisites chain: dates alone are not sufficient for authorization", () => {
+// 7. A reservation can never be staged without a party size — the
+//    reservation flow is not a requirements-gathering surface.
+run("stageReservation refuses a trip with dates but no party size", () => {
   const intent: TripIntent = {
     ...EMPTY_TRIP_INTENT,
-    guestCount: null, // still missing, on purpose
+    guestCount: null, // missing, on purpose
     checkIn: "Sept 12",
     checkOut: "Sept 14",
     hardRequirements: ["Pet-friendly"],
   };
-  const result = evaluateCampsites(intent);
-  const top = result.candidates[0];
-  const { reservation: staged } = stageReservation(
-    top.campsite,
-    intent.guestCount,
-    intent.checkIn as string,
-    intent.checkOut as string,
-  );
-  const attempt = transitionReservation(staged, { type: "RESERVE_ATTEMPT" });
-  assert(
-    attempt.reservation.status === "incomplete",
-    `dates alone don't satisfy the full booking-ready requirement — guestCount is still missing, expected "incomplete", got "${attempt.reservation.status}"`,
-  );
-  assert(
-    attempt.reservation.checkIn === "Sept 12" && attempt.reservation.checkOut === "Sept 14",
-    "the dates that WERE supplied survive the incomplete transition unchanged",
-  );
+  const top = evaluateCampsites(intent).candidates[0];
+  let threw = false;
+  try {
+    stageReservation(top.campsite, intent.guestCount as unknown as number, "Sept 12", "Sept 14");
+  } catch {
+    threw = true;
+  }
+  assert(threw, "no reservation (and so no Review screen) can exist with a missing guest count");
 });
 
 console.log("\n(See docs/implementation-decisions.md for the live-Playwright results covering: " +

@@ -1,3 +1,4 @@
+import { newId } from "@/lib/id";
 import { computeDateRange } from "@/lib/dates";
 import type {
   CancellationPolicy,
@@ -34,7 +35,7 @@ function makeEvent(
   relatedIds?: TaskEvent["relatedIds"],
 ): TaskEvent {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     type,
     actor,
     description,
@@ -98,7 +99,11 @@ export function describeCancellationPolicy(
  * ever violated — inventory facts (nights, price, cancellation cutoff) are
  * always derived from the trip's actual dates, never a campsite default.
  *
- * `dates` (the string the Reservation Review/Authorize Booking surfaces
+ * `guestCount` is likewise required: party size is a conversational
+ * prerequisite (`checkBookingPrerequisites`), resolved before the user can
+ * enter the reservation flow at all — the reservation UI never asks for it.
+ *
+ * `dates` (the string the Reservation Review/Confirm surfaces
  * actually display) is built from these USER-STATED dates — the dates the
  * user asked for, not any campsite-side default. `nights` (and therefore
  * the nightly-rate math and the cancellation cutoff) is DERIVED from this
@@ -107,10 +112,19 @@ export function describeCancellationPolicy(
  */
 export function stageReservation(
   campsite: Campsite,
-  guestCount: number | null,
+  guestCount: number,
   checkIn: string,
   checkOut: string,
+  // The user's saved payment method, when one was already added earlier in
+  // this session (e.g. before choosing to edit the trip) — Review then offers
+  // "Continue to confirm" instead of asking for payment again.
+  savedPaymentMethodLabel: string | null = null,
 ): { reservation: Reservation; event: TaskEvent } {
+  if (!Number.isInteger(guestCount) || guestCount < 1) {
+    throw new Error(
+      `stageReservation requires a known party size (got ${guestCount}) — caller must run checkBookingPrerequisites first.`,
+    );
+  }
   const range = computeDateRange(checkIn, checkOut);
   if (!range) {
     throw new Error(
@@ -129,7 +143,7 @@ export function stageReservation(
     serviceFee: campsite.serviceFee,
     total,
     cancellationPolicy: describeCancellationPolicy(campsite.cancellationPolicy, range.startISO),
-    paymentMethodLabel: null,
+    paymentMethodLabel: savedPaymentMethodLabel,
     status: "staged",
     confirmationNumber: null,
   };
@@ -143,19 +157,16 @@ export function stageReservation(
 }
 
 /**
- * Required fields for authorization. The live Figma design only models
- * payment method as capable of being missing (Reservation Review never
- * shows a guest-count row as an error state). guestCount is guarded here
- * too as a defensive extension beyond the literal mock — see
- * docs/implementation-decisions.md — since it's a structured field with
- * deterministic meaning (capacity) that could otherwise reach staging
- * unset.
+ * The date after which the booking stops being refundable — the same cutoff
+ * `describeCancellationPolicy` words, for the Confirm screen's warning line.
  */
-export function computeMissingFields(reservation: Reservation): string[] {
-  const missing: string[] = [];
-  if (reservation.guestCount === null) missing.push("Guest count");
-  if (!reservation.paymentMethodLabel) missing.push("Payment method");
-  return missing;
+export function nonRefundableAfter(reservation: Reservation): string {
+  const range = computeDateRange(reservation.checkIn, reservation.checkOut);
+  if (!range) return "";
+  const [y, m, d] = range.startISO.split("-").map(Number);
+  const cutoff = new Date(y, m - 1, d);
+  cutoff.setDate(cutoff.getDate() - reservation.campsite.cancellationPolicy.freeUntilDaysBeforeCheckIn);
+  return `${MONTH_NAMES[cutoff.getMonth()]} ${cutoff.getDate()}`;
 }
 
 /**
@@ -172,6 +183,29 @@ function deterministicConfirmationNumber(reservation: Reservation): string {
   return `CO-${(hash % 100000).toString().padStart(5, "0")}`;
 }
 
+/**
+ * Discards a staged (not yet charged) reservation — Cancel reservation after
+ * its confirmation dialog, or Edit reservation returning to the conversation.
+ * Only possible before authorization: once processing has begun, or the
+ * booking is confirmed, there is nothing "staged" left to discard.
+ */
+export function discardStagedReservation(
+  reservation: Reservation,
+  reason: "cancelled" | "editing",
+): TaskEvent {
+  if (reservation.status === "authorizing" || reservation.status === "reserved") {
+    throw new Error(`Cannot discard a reservation from status "${reservation.status}".`);
+  }
+  const site = `${reservation.campsite.siteName} at ${reservation.campsite.campgroundName}`;
+  return reason === "cancelled"
+    ? makeEvent("reservation_cancelled", "user", `Cancelled the staged reservation for ${site}. Nothing was charged.`, {
+        campsiteId: reservation.campsite.id,
+      })
+    : makeEvent("trip_edit_requested", "user", `Went back to edit the trip; the staged reservation for ${site} was set aside.`, {
+        campsiteId: reservation.campsite.id,
+      });
+}
+
 export function transitionReservation(
   reservation: Reservation,
   event: ReservationEvent,
@@ -180,56 +214,59 @@ export function transitionReservation(
   const relatedIds = { campsiteId: reservation.campsite.id };
 
   switch (event.type) {
-    case "RESERVE_ATTEMPT": {
-      if (
-        reservation.status !== "staged" &&
-        reservation.status !== "incomplete"
-      ) {
-        throw new Error(
-          `Cannot attempt to reserve from status "${reservation.status}".`,
-        );
-      }
-      const missing = computeMissingFields(reservation);
-      if (missing.length > 0) {
-        return {
-          reservation: { ...reservation, status: "incomplete" },
-          event: makeEvent(
-            "missing_info_detected",
-            "system",
-            `Missing ${missing.join(" and ").toLowerCase()} — can't authorize yet.`,
-            relatedIds,
-          ),
-        };
+    case "BEGIN_ADD_PAYMENT": {
+      if (reservation.status !== "staged") {
+        throw new Error(`Cannot add a payment method from status "${reservation.status}".`);
       }
       return {
-        reservation: { ...reservation, status: "ready_for_authorization" },
+        reservation: { ...reservation, status: "adding_payment" },
+        event: makeEvent("payment_entry_started", "user", "Started adding a payment method.", relatedIds),
+      };
+    }
+
+    case "CANCEL_ADD_PAYMENT": {
+      if (reservation.status !== "adding_payment") {
+        throw new Error(`Cannot leave payment entry from status "${reservation.status}".`);
+      }
+      return {
+        reservation: { ...reservation, status: "staged" },
         event: makeEvent(
-          "authorization_presented",
-          "agent",
-          `Presented booking details for ${site}.`,
+          "payment_entry_dismissed",
+          "user",
+          "Went back to the reservation without adding a payment method.",
           relatedIds,
         ),
       };
     }
 
     case "ADD_PAYMENT_METHOD": {
-      if (reservation.status === "reserved") {
-        throw new Error("Cannot modify payment method on a reserved booking.");
+      if (reservation.status !== "adding_payment") {
+        throw new Error(`Cannot save a payment method from status "${reservation.status}".`);
       }
-      // Resolves the missing-info condition; returns to the resting staged
-      // state so the user can attempt Reserve again.
+      // Payment satisfied → straight on to Confirm your reservation. Nothing
+      // is attempted or charged here; authorization is its own explicit step.
       return {
         reservation: {
           ...reservation,
           paymentMethodLabel: event.label,
-          status: "staged",
+          status: "ready_for_authorization",
         },
-        event: makeEvent(
-          "payment_method_added",
-          "user",
-          "Added a payment method.",
-          relatedIds,
-        ),
+        event: makeEvent("payment_method_added", "user", `Added a payment method (${event.label}).`, relatedIds),
+      };
+    }
+
+    case "CONTINUE_TO_CONFIRMATION": {
+      if (reservation.status !== "staged") {
+        throw new Error(`Cannot continue to confirmation from status "${reservation.status}".`);
+      }
+      // Error prevention: Review offers "Add payment method" instead of this
+      // until a payment method exists, so the throw is unreachable from the UI.
+      if (!reservation.paymentMethodLabel) {
+        throw new Error("Cannot continue to confirmation without a payment method — add one first.");
+      }
+      return {
+        reservation: { ...reservation, status: "ready_for_authorization" },
+        event: makeEvent("authorization_presented", "agent", `Presented booking details for ${site}.`, relatedIds),
       };
     }
 
@@ -272,10 +309,9 @@ export function transitionReservation(
     }
 
     case "CANCEL_AUTHORIZATION": {
-      if (
-        reservation.status !== "ready_for_authorization" &&
-        reservation.status !== "authorizing"
-      ) {
+      // Only from Confirm — once processing has begun there is no cancel
+      // (Figma's Processing state offers none).
+      if (reservation.status !== "ready_for_authorization") {
         throw new Error(
           `Cannot cancel authorization from status "${reservation.status}".`,
         );

@@ -115,10 +115,18 @@
   --input: #8994a3;
   --ring: #1b598e; /* water/default */
 
-  /* Pages v2-only surfaces (no DS token exists for them): the mobile
-     sticky composer bar's fade-out color, and the Your Trip sheet scrim. */
+  /* Pages v2-only surfaces (no DS token exists for them): the sticky
+     composer bar's fade-out color, the Your Trip sheet scrim, and the
+     desktop scroll-region scrollbar (Pages v2 "scroll bar" reference). */
   --surface-fade: #c9c7c5;
   --scrim: rgb(26 26 26 / 0.5);
+  --scrollbar-track: #c8c6c4;
+  --scrollbar-thumb: #d9d9d9;
+
+  /* Bottom safe area for the mobile foreground layer (grab bar + composer).
+     Dropped while the software keyboard is open — the keyboard already
+     covers the home-indicator area, so adding it would leave a gap. */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -144,6 +152,11 @@
   --water-tint: #dfe8ef;
   --sky: #8fc1de;
   --sky-tint: #e8f1f6;
+}
+
+/* Set by useVisualViewport while the software keyboard is open. */
+html[data-keyboard-open] {
+  --safe-bottom: 0px;
 }
 
 .dark {
@@ -189,5 +202,32 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* Independently scrolling desktop regions (conversation column, Trip
+   Panel) — Pages v2 "scroll bar" reference: a 24px track with an 8px inset,
+   rounded thumb. Progressive enhancement: engines with ::-webkit-scrollbar
+   (Chrome, Edge, Safari) get the full geometry; others (Firefox) get the
+   closest standard equivalent, colors only. A scrollbar only ever renders
+   where the region actually overflows (`overflow-y: auto`). The reference's
+   arrow buttons are intentionally not forced. */
+@supports selector(::-webkit-scrollbar) {
+  .scroll-region::-webkit-scrollbar {
+    width: 24px;
+  }
+  .scroll-region::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+  .scroll-region::-webkit-scrollbar-thumb {
+    min-height: 40px;
+    border: 8px solid transparent;
+    border-radius: 9999px;
+    background: var(--scrollbar-thumb) padding-box;
+  }
+}
+@supports not selector(::-webkit-scrollbar) {
+  .scroll-region {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
 }
