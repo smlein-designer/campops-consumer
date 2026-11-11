@@ -121,7 +121,7 @@ run("Adding a hard requirement changes which candidates qualify", () => {
 });
 
 // 6. Changing a relative priority changes ranking where the dataset
-//    demonstrates that (only silver-creek-7 has Wifi among the qualifying
+//    demonstrates that (only lakeview-11 has Wifi among the qualifying
 //    pet-friendly, capacity-4 sites).
 run("Adding a relative priority changes the top-ranked candidate", () => {
   const before: TripIntent = {
@@ -136,12 +136,12 @@ run("Adding a relative priority changes the top-ranked candidate", () => {
   const beforeTop = evaluateCampsites(before).candidates[0]?.campsite.id;
   const afterTop = evaluateCampsites(after).candidates[0]?.campsite.id;
   assert(
-    beforeTop !== "silver-creek-7",
-    `setup: silver-creek-7 shouldn't lead without the Wifi priority — got ${beforeTop}`,
+    beforeTop !== "lakeview-11",
+    `setup: lakeview-11 shouldn't lead without the Wifi priority — got ${beforeTop}`,
   );
   assert(
-    afterTop === "silver-creek-7",
-    `silver-creek-7 (the only qualifying site with Wifi) should take the lead once Wifi is a stated priority — got ${afterTop}`,
+    afterTop === "lakeview-11",
+    `lakeview-11 (the only qualifying site with Wifi) should take the lead once Wifi is a stated priority — got ${afterTop}`,
   );
 });
 

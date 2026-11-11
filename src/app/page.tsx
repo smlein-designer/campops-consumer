@@ -1176,8 +1176,8 @@ export default function Home() {
   }
 
   function handleChangeRequirement() {
-    // Explicit, immediate "let me type in the composer" action (the No
-    // Match Attention Card's "Change a requirement" button) — unrelated to
+    // Explicit, immediate "let me type in the composer" action (the
+    // candidate card's "Change my requirements" button) — unrelated to
     // the pending-after-submit mechanism above; this one always focuses
     // right away, the same real ref the rest of this feature uses.
     composerInputRef.current?.focus();
@@ -1670,13 +1670,6 @@ export default function Home() {
       <div className={actionRow}>
         <Button className={actionButton} onClick={handleWidenSearch}>
           Widen search
-        </Button>
-        <Button
-          variant="outline"
-          className={actionButton}
-          onClick={handleChangeRequirement}
-        >
-          Change a requirement
         </Button>
         <button
           type="button"

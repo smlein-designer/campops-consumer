@@ -5,7 +5,7 @@ import { CircleStop } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { text } from "@/lib/typography";
 
-/** Stable id so other UI (e.g. the No Match "Change a requirement" action) can focus the composer. */
+/** Stable id so other UI (e.g. the "Change my requirements" action) can focus the composer. */
 export const COMPOSER_INPUT_ID = "campops-composer-input";
 
 /**
