@@ -45,6 +45,11 @@ run("Alias normalization: showers/hookups/drinking water", () => {
   assert(normalizeAmenityLabel("showers") === "shower", "'showers' -> shower");
   assert(normalizeAmenityLabel("drinking water") === "potable_water", "'drinking water' -> potable_water");
   assert(normalizeAmenityLabel("hookups") === "electric_hookup", "'hookups' -> electric_hookup");
+  for (const w of ["Wi-Fi", "WiFi", "wi-fi", "wifi"]) {
+    assert(normalizeAmenityLabel(w) === "wifi", `'${w}' -> wifi`);
+  }
+  assert(normalizeAmenityLabel("running water") === "potable_water", "'running water' -> potable_water");
+  assert(normalizeAmenityLabel("water hookups") === "potable_water", "'water hookups' -> potable_water");
 });
 
 run("An unrecognized string normalizes to null, not a guessed code", () => {
