@@ -228,12 +228,18 @@ export type AgentState = {
   currentStepText: string;
 };
 
+/** `kind`/`payload` let the UI route a button click to the right resolver
+ * (src/lib/v3/scripted-events.ts) without string-matching the copy. */
+export type NeedsYouKind = "forecast_move" | "hold_expired" | "campsite_unavailable";
+
 export type NeedsYouItem = {
   id: string;
   eyebrow: string;
   message: string;
   primaryLabel: string;
   secondaryLabel?: string;
+  kind?: NeedsYouKind;
+  payload?: Record<string, string>;
 };
 
 // ---- Conversation thread --------------------------------------------------

@@ -9,16 +9,45 @@ import { ClockProvider, useClock } from "@/lib/v3/clock";
 import { TripProvider, useTrip } from "@/lib/v3/store";
 import { emptyTrip } from "@/lib/v3/trip-factory";
 import { fetchPhrasing, runAgentTurn } from "@/lib/v3/agent-loop";
+import {
+  fireCampsiteUnavailable,
+  fireForecastChange,
+  fireHoldExpiry,
+  resolveCampsiteUnavailableHold,
+  resolveForecastDecision,
+  resolveHoldExpiryRehold,
+  type ScriptedEventResult,
+} from "@/lib/v3/scripted-events";
 import { newId } from "@/lib/id";
 import { TripShell } from "@/components/v3/trip-shell";
 import { Itinerary } from "@/components/v3/itinerary";
 import { ApproveBar } from "@/components/v3/approve-bar";
+import { DemoPanel } from "@/components/v3/demo-panel";
 import { formatUsd, tripTotal } from "@/lib/v3/money";
+import type { Trip } from "@/lib/v3/schemas";
 
 function LiveTripPlan() {
   const { trip, dispatch } = useTrip();
   const { now } = useClock();
   const [busy, setBusy] = useState(false);
+
+  /** Applies a scripted event or resolver's result as one agent-voiced turn (no user message). */
+  async function applyEvent(result: ScriptedEventResult, baseTrip: Trip = trip) {
+    if (result.trip === baseTrip && result.factsToPhrase.length === 0) return; // no-op (already fired, or nothing to do)
+    setBusy(true);
+    try {
+      const agentLines = await fetchPhrasing(result.factsToPhrase);
+      dispatch({
+        type: "RESET",
+        trip: {
+          ...result.trip,
+          thread: [...baseTrip.thread, ...agentLines.map((line) => ({ id: newId(), from: "agent" as const, message: line }))],
+        },
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleSubmit(message: string) {
     setBusy(true);
@@ -52,6 +81,17 @@ function LiveTripPlan() {
   const held = trip.bookings.some((b) => b.status === "held");
   const needsYou = trip.needsYouQueue[0];
 
+  function resolveNeedsYou(choice: "primary" | "secondary") {
+    if (!needsYou) return;
+    if (needsYou.kind === "forecast_move") {
+      void applyEvent(resolveForecastDecision(trip, needsYou.id, choice === "primary", now));
+    } else if (needsYou.kind === "hold_expired" && choice === "primary") {
+      void applyEvent(resolveHoldExpiryRehold(trip, needsYou.id, needsYou.payload?.bookingId ?? "", now));
+    } else if (needsYou.kind === "campsite_unavailable" && choice === "primary") {
+      void applyEvent(resolveCampsiteUnavailableHold(trip, needsYou.id, needsYou.payload?.campsiteId ?? "", now));
+    }
+  }
+
   return (
     <TripShell
       chargeStatus="Nothing charged yet"
@@ -65,8 +105,8 @@ function LiveTripPlan() {
           ? {
               eyebrow: needsYou.eyebrow,
               message: needsYou.message,
-              primary: { label: needsYou.primaryLabel },
-              secondary: needsYou.secondaryLabel ? { label: needsYou.secondaryLabel } : undefined,
+              primary: { label: needsYou.primaryLabel, onClick: () => resolveNeedsYou("primary") },
+              secondary: needsYou.secondaryLabel ? { label: needsYou.secondaryLabel, onClick: () => resolveNeedsYou("secondary") } : undefined,
             }
           : undefined
       }
@@ -82,6 +122,15 @@ function LiveTripPlan() {
         </p>
       )}
       {busy && <p className="text-body-s text-[var(--color-text-tertiary)]">Working…</p>}
+      <DemoPanel
+        onFireForecast={() => void applyEvent(fireForecastChange(trip, now))}
+        onFireHoldExpiry={() => {
+          const trailRide = trip.bookings.find((b) => b.refId === "hcr-beginner-trail" && b.status === "held");
+          if (trailRide) void applyEvent(fireHoldExpiry(trip, trailRide.id, now));
+        }}
+        onFireCampsiteUnavailable={() => void applyEvent(fireCampsiteUnavailable(trip, "cedar-point-3", now))}
+        onReset={() => dispatch({ type: "RESET", trip: emptyTrip() })}
+      />
     </TripShell>
   );
 }

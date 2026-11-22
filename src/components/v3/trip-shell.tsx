@@ -118,7 +118,7 @@ export function TripShell({
           <ConversationPeek
             message={lastMessage}
             showApprove={!!approveBar}
-            onApprove={() => setSheetOpen(true)}
+            onOpen={() => setSheetOpen(true)}
           />
         </div>
       </div>
