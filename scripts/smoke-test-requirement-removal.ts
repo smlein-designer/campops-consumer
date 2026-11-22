@@ -276,7 +276,9 @@ run("Optional removal: the search can run immediately against the relaxed reques
   // 0 → many / 0 → 1 / 1 → many.
   const none: TripIntent = { ...TRIP, destinationRegion: "Hill Country", hardRequirements: ["Near water", "RV site"] };
   assert(count(none) === 0, "Hill Country + water + RV: No Match");
-  assert(count(removeChip(none, "RV site").intent) === 4, "remove RV site → 4 matches");
+  // 8, not 4: the v3 demo-story sites (Build Brief §5) added 4 more
+  // Hill Country, water-adjacent sites to the dataset.
+  assert(count(removeChip(none, "RV site").intent) === 8, "remove RV site → 8 matches");
   assert(count(removeChip(none, "Near water").intent) === 1, "remove Near water → the single-result state");
   const one: TripIntent = { ...TRIP, destinationRegion: "West Texas", hardRequirements: ["RV site"] };
   assert(count(one) === 1 && count(removeChip(one, "RV site").intent) === 2, "1 match → remove → 2 matches");

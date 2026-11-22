@@ -55,6 +55,14 @@ export const SITE_PHOTO_SETTING: Record<string, PhotoSetting> = {
   "north-ridge-1": "desert",
   "guadalupe-mountains-1": "desert",
   "palo-duro-canyon-5": "desert",
+  // v3 demo-story sites (Hill Country) — explicitly varied so adjacent
+  // recommendations in the near-water demo query stay visually distinct
+  // (see scripts/smoke-test-campsite-photos.ts).
+  "cedar-point-3": "river",
+  "pine-hollow-14": "forest",
+  "live-oak-bend-7": "forest",
+  "prairie-flats-22": "forest",
+  "ridgeview-31": "river",
 };
 
 function photoType(siteType: string): PhotoType {

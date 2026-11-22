@@ -37,9 +37,13 @@ run("Known full-match scenario ranks the intended candidate first", () => {
   };
   const result = evaluateCampsites(intent);
   assert(result.kind === "full", `expected full — got ${result.kind}`);
+  // prairie-flats-22 (added for v3 — Build Brief §5) is a cheaper qualifying
+  // site than government-canyon-5, so it's now the correct cheapest-first
+  // answer; this is the dataset growing, not the evaluator's ranking rule
+  // changing.
   assert(
-    result.candidates[0]?.campsite.id === "government-canyon-5",
-    `expected government-canyon-5 to rank first (cheapest of the qualifying sites, in the expanded Texas dataset) — got ${result.candidates[0]?.campsite.id}`,
+    result.candidates[0]?.campsite.id === "prairie-flats-22",
+    `expected prairie-flats-22 to rank first (cheapest of the qualifying sites) — got ${result.candidates[0]?.campsite.id}`,
   );
 });
 
