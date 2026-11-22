@@ -17,8 +17,8 @@ export function TripHero({
   return (
     <div
       className={cn(
-        "relative flex flex-col justify-end overflow-hidden px-8 pb-7",
-        size === "large" ? "h-64" : "h-[180px]",
+        "relative flex flex-col justify-end overflow-hidden px-8",
+        size === "large" ? "h-64 pb-7" : "h-[180px] pb-[22px]",
       )}
       style={
         photo

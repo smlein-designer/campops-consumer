@@ -40,6 +40,8 @@ export function TripShell({
   onReview,
   railWide = false,
   onComposerSubmit,
+  composerPlaceholder,
+  threadFooter,
   children,
 }: {
   chargeStatus: string;
@@ -60,6 +62,9 @@ export function TripShell({
   railWide?: boolean;
   /** Wires the Composer to a real handler (the live agent loop); omitted on the static fixture screens. */
   onComposerSubmit?: (message: string) => void;
+  composerPlaceholder?: string;
+  /** A non-text card appended after the thread's chat bubbles (e.g. a Clarifying Question). */
+  threadFooter?: ReactNode;
   children: ReactNode;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -97,16 +102,27 @@ export function TripShell({
               <NeedsYouCard {...needsYou} />
             </div>
           )}
-          <div className="flex flex-1 flex-col justify-end gap-3 overflow-y-auto p-5">
+          <div
+            className={cn(
+              "flex flex-1 flex-col justify-end gap-3 overflow-y-auto",
+              railWide ? "p-8" : "p-5",
+            )}
+          >
             {thread.length > 0 && (
               <p className="text-caption text-[var(--color-text-tertiary)]">Earlier today</p>
             )}
             {thread.map((m, i) => (
               <ChatBubble key={i} from={m.from} message={m.message} />
             ))}
+            {threadFooter}
           </div>
-          <div className="border-t border-[var(--color-border-default)] px-4 pt-3 pb-5">
-            <Composer onSubmit={onComposerSubmit} />
+          <div
+            className={cn(
+              "border-t border-[var(--color-border-default)] pt-3",
+              railWide ? "px-6 pb-6" : "px-4 pb-5",
+            )}
+          >
+            <Composer onSubmit={onComposerSubmit} placeholder={composerPlaceholder} />
           </div>
         </div>
       </div>
@@ -143,9 +159,10 @@ export function TripShell({
               {thread.map((m, i) => (
                 <ChatBubble key={i} from={m.from} message={m.message} />
               ))}
+              {threadFooter}
             </div>
             <div className="border-t border-[var(--color-border-default)] p-4">
-              <Composer onSubmit={onComposerSubmit} />
+              <Composer onSubmit={onComposerSubmit} placeholder={composerPlaceholder} />
             </div>
           </div>
         </div>

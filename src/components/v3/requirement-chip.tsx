@@ -5,7 +5,7 @@ export type RequirementChipType = "mustHave" | "niceToHave" | "changed";
 const typeClasses: Record<RequirementChipType, string> = {
   mustHave: "bg-[var(--color-bg-brand)] text-[var(--color-text-on-brand)]",
   niceToHave:
-    "border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)]",
+    "border border-[var(--color-border-strong)] bg-[var(--color-bg-surface)] text-[var(--color-text-primary)]",
   changed:
     "border border-[var(--color-border-attention-strong)] bg-[var(--color-bg-attention)] text-[var(--color-text-attention)]",
 };
@@ -27,7 +27,7 @@ export function RequirementChip({
       type={onClick ? "button" : undefined}
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-3 py-1 text-label-s whitespace-nowrap",
+        "inline-flex h-9 items-center gap-1 rounded-md px-3 text-label-m whitespace-nowrap",
         typeClasses[type],
         onClick && "cursor-pointer",
       )}
