@@ -46,11 +46,13 @@ export function LandingHero({
       <TopNav theme="onPhoto" active="Trips" chargeStatus="Nothing charged yet" showChargeStatus={false} />
       <div className="flex flex-1 flex-col items-center justify-center gap-8 px-8 pb-20 text-center">
         <h1 className="max-w-4xl text-display-l text-white md:text-display-xl">Where do you want to wake up?</h1>
-        <p className="max-w-xl text-body-l text-[#f1eee5]">
-          Describe the trip. CampOps finds the site, lines up the boat, the ride and the guide, and holds it all
-          until you approve.
-        </p>
-        <div className="flex w-full max-w-[760px] flex-col gap-4 rounded-3xl bg-white py-5 pr-5 pl-6 text-left shadow-[0px_24px_60px_0px_rgba(10,18,13,0.35)]">
+        <div className="rounded-lg bg-[rgba(10,18,13,0.45)] p-2">
+          <p className="max-w-[620px] text-body-l text-[#f1eee5]">
+            Describe the trip. CampOps finds the site, lines up the boat, the ride and the guide, and holds it all
+            until you approve.
+          </p>
+        </div>
+        <div className="flex w-full max-w-[760px] flex-col gap-4 rounded-3xl bg-white pt-5 pr-5 pb-4 pl-6 text-left shadow-[0px_24px_60px_0px_rgba(10,18,13,0.35)]">
           <textarea
             value={value}
             disabled={busy}
@@ -78,7 +80,7 @@ export function LandingHero({
               key={starter}
               type="button"
               onClick={() => setValue(starter)}
-              className="rounded-full border border-white/45 bg-black/[0.35] px-4 py-2.5 text-label-m text-white hover:bg-black/[0.5]"
+              className="rounded-full border border-white/45 bg-[rgba(10,18,13,0.35)] px-4 py-2.5 text-label-m text-white hover:bg-[rgba(10,18,13,0.5)]"
             >
               {starter}
             </button>
