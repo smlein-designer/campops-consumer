@@ -291,31 +291,37 @@ html[data-keyboard-open] {
 @layer utilities {
   .text-display-xl {
     font-family: var(--font-display);
+    font-weight: 700;
     font-size: 72px;
     line-height: 72px;
   }
   .text-display-l {
     font-family: var(--font-display);
+    font-weight: 700;
     font-size: 54px;
     line-height: 54px;
   }
   .text-heading-l {
     font-family: var(--font-display);
+    font-weight: 600;
     font-size: 40px;
     line-height: 44px;
   }
   .text-heading-m {
     font-family: var(--font-display);
+    font-weight: 600;
     font-size: 26px;
     line-height: 30px;
   }
   .text-heading-s {
     font-family: var(--font-display);
+    font-weight: 600;
     font-size: 20px;
     line-height: 24px;
   }
   .text-price-l {
     font-family: var(--font-display);
+    font-weight: 800;
     font-size: 26px;
     line-height: 30px;
   }

@@ -2,12 +2,12 @@ import type { Metadata, Viewport } from "next";
 import { Geist_Mono, National_Park, Inter } from "next/font/google";
 import "./globals.css";
 
-// v3 type ramp (Handoff Spec 1.3) — Display/Heading/Price styles use
-// National Park ExtraBold, everything else uses Inter. Inter replaces v2's
-// Public Sans.
+// v3 type ramp (Figma Foundations, node 8:336) — Display uses National Park
+// Bold (700), Heading uses SemiBold (600), Price uses ExtraBold (800);
+// everything else uses Inter. Inter replaces v2's Public Sans.
 const nationalPark = National_Park({
   variable: "--font-national-park",
-  weight: "800",
+  weight: ["600", "700", "800"],
   subsets: ["latin"],
 });
 
