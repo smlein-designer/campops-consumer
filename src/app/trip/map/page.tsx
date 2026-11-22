@@ -22,7 +22,7 @@ export default function TripMapPage() {
     <TripShell
       chargeStatus="Nothing charged yet"
       hero={
-        <TripHero size="large" status="Trip · Planning" title="Hill Country Weekend" {...GOLDEN_PATH_TRIP_HERO} />
+        <TripHero size="large" status="Trip plan · in progress" title="Lake weekend, Hill Country" {...GOLDEN_PATH_TRIP_HERO} />
       }
       agent={GOLDEN_PATH_AGENT_WAITING}
       needsYou={GOLDEN_PATH_NEEDS_YOU}
@@ -48,7 +48,7 @@ export default function TripMapPage() {
           <MapPin status="held" place="Granite Ridge Outfitters" detail="Sun 7:00-8:30" />
         </div>
       </div>
-      <Itinerary bookings={GOLDEN_PATH_BOOKINGS} photoByBookingId={GOLDEN_PATH_PHOTO_BY_BOOKING} />
+      <Itinerary bookings={GOLDEN_PATH_BOOKINGS} photoByBookingId={GOLDEN_PATH_PHOTO_BY_BOOKING} showHeader={false} />
     </TripShell>
   );
 }

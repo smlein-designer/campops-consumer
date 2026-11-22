@@ -18,7 +18,7 @@ export default function UnsupportedRequestPage() {
     <TripShell
       chargeStatus="Nothing charged yet"
       hero={
-        <TripHero size="large" status="Trip · Planning" title="Hill Country Weekend" {...GOLDEN_PATH_TRIP_HERO} />
+        <TripHero size="large" status="Trip plan · in progress" title="Lake weekend, Hill Country" {...GOLDEN_PATH_TRIP_HERO} />
       }
       agent={{ state: "waiting", title: "Waiting on you", detail: "One item needs a decision" }}
       needsYou={GOLDEN_PATH_NEEDS_YOU}

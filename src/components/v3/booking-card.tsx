@@ -3,20 +3,22 @@ import { StatusBadge } from "@/components/v3/status-badge";
 
 export type BookingCardState = "held" | "needsOk" | "holdExpired" | "working" | "approved";
 
+// Figma node 3:42. Needs OK gets a 2px ember border; every other state is
+// borderless (the card's own white fill against the canvas is enough).
 const stateBorder: Record<BookingCardState, string> = {
-  held: "border-[var(--color-border-default)]",
-  needsOk: "border-[var(--color-border-attention-strong)]",
-  holdExpired: "border-[var(--color-border-default)]",
-  working: "border-[var(--color-border-default)]",
-  approved: "border-[var(--color-border-default)]",
+  held: "",
+  needsOk: "border-2 border-[var(--color-border-attention-strong)]",
+  holdExpired: "",
+  working: "",
+  approved: "",
 };
 
-const stateBadge: Record<
+const defaultStatus: Record<
   BookingCardState,
   { status: "held" | "needsOk" | "expired" | "working" | "approved"; label: string }
 > = {
-  held: { status: "held", label: "Held" },
-  needsOk: { status: "needsOk", label: "Needs OK" },
+  held: { status: "held", label: "Held · free to cancel" },
+  needsOk: { status: "needsOk", label: "Moved here · needs your OK" },
   holdExpired: { status: "expired", label: "Hold expired" },
   working: { status: "working", label: "Working" },
   // No timers or Release once approved (Handoff Spec §4.1 "Booking Confirmed").
@@ -40,6 +42,7 @@ export function BookingCard({
   kind,
   title,
   meta,
+  statusLabel,
   holdEndsAt,
   showPhoto = false,
   photo,
@@ -49,44 +52,46 @@ export function BookingCard({
   kind: string;
   title: string;
   meta: string;
+  /** Overrides the default status-badge copy, e.g. a non-refundable hold's own wording. */
+  statusLabel?: string;
   holdEndsAt?: Date;
   showPhoto?: boolean;
   photo?: string;
   onRelease?: () => void;
 }) {
-  const badge = stateBadge[state];
+  const badge = defaultStatus[state];
   return (
-    <div className={cn("flex gap-3 rounded-xl border bg-[var(--color-bg-surface)] p-4", stateBorder[state])}>
+    <div className={cn("flex flex-col overflow-hidden rounded-xl bg-[var(--color-bg-surface)]", stateBorder[state])}>
       {showPhoto && (
         <div
-          className="h-16 w-16 shrink-0 rounded-lg bg-[var(--color-bg-subtle)] bg-cover bg-center"
+          className="h-20 w-full shrink-0 bg-[var(--color-bg-subtle)] bg-cover bg-center"
           style={photo ? { backgroundImage: `url(${photo})` } : undefined}
         />
       )}
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-overline text-[var(--color-text-tertiary)]">{kind}</p>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-label-l text-[var(--color-text-primary)]">{title}</p>
-          <StatusBadge status={badge.status} label={badge.label} />
-        </div>
+      <div className="flex flex-col gap-1 px-4 pt-3 pb-4">
+        <p className="text-caption text-[var(--color-text-secondary)]">{kind}</p>
+        <p className="text-label-l text-[var(--color-text-primary)]">{title}</p>
         <p className="text-body-s text-[var(--color-text-secondary)]">{meta}</p>
-        {state === "held" && holdEndsAt && (
-          <p
-            className="text-caption text-[var(--color-text-held)]"
-            aria-label={`Hold ends in ${formatCountdown(holdEndsAt)}`}
-          >
-            {formatCountdown(holdEndsAt)}
-          </p>
-        )}
-        {state === "held" && onRelease && (
-          <button
-            type="button"
-            onClick={onRelease}
-            className="text-label-s text-[var(--color-text-link)] underline-offset-2 hover:underline"
-          >
-            Release
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1">
+          <StatusBadge status={badge.status} label={statusLabel ?? badge.label} />
+          {state === "held" && holdEndsAt && (
+            <p
+              className="text-label-s text-[var(--color-text-held)]"
+              aria-label={`Hold ends in ${formatCountdown(holdEndsAt)}`}
+            >
+              {formatCountdown(holdEndsAt)}
+            </p>
+          )}
+          {state === "held" && onRelease && (
+            <button
+              type="button"
+              onClick={onRelease}
+              className="text-label-s text-[var(--color-text-link)] underline-offset-2 hover:underline"
+            >
+              Release
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

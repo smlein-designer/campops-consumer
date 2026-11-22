@@ -22,7 +22,7 @@ export default function BookingConfirmedPage() {
     <TripShell
       chargeStatus="Booked · $642 charged"
       hero={
-        <TripHero size="large" status="Trip · Booked" title="Hill Country Weekend" {...GOLDEN_PATH_TRIP_HERO} />
+        <TripHero size="large" status="Trip plan · booked" title="Lake weekend, Hill Country" {...GOLDEN_PATH_TRIP_HERO} />
       }
       agent={{ state: "working", title: "Trip booked", detail: "Every item is confirmed" }}
       thread={[{ from: "agent", message: "You're all set — every item is confirmed and charged to your Visa ending 4242." }]}

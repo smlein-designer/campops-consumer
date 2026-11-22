@@ -7,7 +7,9 @@ const variantClasses: Record<ButtonVariant, string> = {
   primary: "bg-[var(--color-bg-brand)] text-[var(--color-text-on-brand)] hover:opacity-90",
   secondary:
     "border border-[var(--color-border-strong)] bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-subtle)]",
-  inverse: "bg-[var(--white)] text-[var(--ink-900)] hover:opacity-90",
+  // Figma 2:22: Inverse is a light canvas-colored pill on the dark Approve
+  // Bar/Agent Status fills — not literal white.
+  inverse: "bg-[var(--color-bg-canvas)] text-[var(--color-text-primary)] hover:opacity-90",
   ghost: "bg-transparent text-[var(--color-text-primary)] hover:bg-[var(--color-bg-subtle)]",
   attention: "bg-[var(--ember-500)] text-[var(--white)] hover:opacity-90",
 };

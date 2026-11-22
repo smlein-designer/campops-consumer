@@ -42,8 +42,8 @@ export const GOLDEN_PATH_BOOKINGS: Booking[] = [
     id: "b-campsite",
     kind: "campsite",
     refId: pineHollow.id,
-    title: `${pineHollow.campgroundName} · ${pineHollow.siteName}`,
-    day: "Apr 16-18",
+    title: `${pineHollow.campgroundName}, ${pineHollow.siteName}`,
+    day: "Fri · Apr 16",
     price: pineHollow.pricePerNight * 2 + pineHollow.serviceFee,
     refundTerms: "Fully refundable until Apr 14",
     dependsOn: [],
@@ -55,7 +55,7 @@ export const GOLDEN_PATH_BOOKINGS: Booking[] = [
     kind: "activity",
     refId: beginnerTrail.id,
     title: beginnerTrail.name,
-    day: "Sat",
+    day: "Sat · Apr 17",
     time: "10:00-12:00",
     price: activityBookingPrice(beginnerTrail, GOLDEN_PATH_PARTY_SIZE),
     refundTerms: beginnerTrail.refundTerms,
@@ -68,7 +68,7 @@ export const GOLDEN_PATH_BOOKINGS: Booking[] = [
     kind: "activity",
     refId: pontoon.id,
     title: pontoon.name,
-    day: "Sun",
+    day: "Sun · Apr 18",
     time: "9:00-1:00",
     price: activityBookingPrice(pontoon, GOLDEN_PATH_PARTY_SIZE),
     refundTerms: pontoon.refundTerms,
@@ -82,7 +82,7 @@ export const GOLDEN_PATH_BOOKINGS: Booking[] = [
     kind: "activity",
     refId: guidedHike.id,
     title: guidedHike.name,
-    day: "Sun",
+    day: "Sun · Apr 18",
     time: "7:00-8:30",
     price: activityBookingPrice(guidedHike, GOLDEN_PATH_PARTY_SIZE),
     refundTerms: guidedHike.refundTerms,
@@ -94,7 +94,7 @@ export const GOLDEN_PATH_BOOKINGS: Booking[] = [
 
 export const GOLDEN_PATH_TRIP_HERO = {
   photo: photoSrc(pineHollow.photoKey ?? "campsite"),
-  facts: ["Apr 16-18", "4 bookings", "$642"],
+  facts: ["Apr 16 to 18", "4 adults and a dog", "Under 2 hrs from Austin", "Budget $800"],
 };
 
 export const GOLDEN_PATH_PHOTO_BY_BOOKING: Record<string, string> = {
@@ -102,34 +102,38 @@ export const GOLDEN_PATH_PHOTO_BY_BOOKING: Record<string, string> = {
 };
 
 export const GOLDEN_PATH_THREAD = [
-  { from: "agent" as const, message: "I held Pine Hollow, Site 14, the trail ride, and the guided hike." },
   {
-    from: "agent" as const,
-    message: "Storms are 70% likely Saturday 2-6pm, right when the pontoon was booked.",
+    from: "user" as const,
+    message: "Lake weekend for 4 plus our dog, Apr 16 to 18. Boat if we are on the water. A beginner trail ride and a guided hike would be great.",
   },
   {
     from: "agent" as const,
-    message: "I found a Sunday 9:00-1:00 slot at the same price. Keep Sunday, or see other options?",
+    message: "Site 14 at Pine Hollow is lakeside and allows dogs, so I added a pontoon nearby. I'm holding the site and the ride while I find a guide.",
+  },
+  {
+    from: "agent" as const,
+    message: "The forecast just changed for Saturday. I've put the details above.",
   },
 ];
 
 export const GOLDEN_PATH_NEEDS_YOU = {
-  eyebrow: "Storms 70% likely Sat 2-6pm",
-  message: "The pontoon slot moves to Sunday 9:00-1:00, same price. Keep Sunday?",
+  eyebrow: "Needs you · weather",
+  message:
+    "Storms are now likely Saturday 2 to 6 pm. I moved the pontoon to Sunday 9 to 1. Same boat, same price, still refundable.",
   primary: { label: "Keep Sunday" },
   secondary: { label: "Other options" },
 };
 
 export const GOLDEN_PATH_AGENT_WAITING = {
   state: "waiting" as const,
-  title: "Waiting on you",
-  detail: "One item needs a decision",
+  title: "CampOps is working",
+  detail: "3 of 4 arranged · comparing guides",
 };
 
 export const GOLDEN_PATH_AGENT_WORKING = {
   state: "working" as const,
-  title: "Working",
-  detail: "Checking water access for the pontoon",
+  title: "CampOps is working",
+  detail: "3 of 4 arranged · comparing guides",
 };
 
-export const GOLDEN_PATH_APPROVE_BAR = { amount: "$642 total", summary: "Nothing charged yet" };
+export const GOLDEN_PATH_APPROVE_BAR = { amount: "$642", summary: "4 bookings · nothing is charged until you approve" };

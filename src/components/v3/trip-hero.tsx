@@ -17,20 +17,20 @@ export function TripHero({
   return (
     <div
       className={cn(
-        "relative flex flex-col justify-end overflow-hidden rounded-xl p-6",
+        "relative flex flex-col justify-end overflow-hidden px-8 pb-7",
         size === "large" ? "h-64" : "h-[180px]",
       )}
       style={
         photo
           ? {
-              backgroundImage: `linear-gradient(to top, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.05)), url(${photo})`,
+              backgroundImage: `linear-gradient(to bottom, rgba(10,18,13,0.05) 25%, rgba(10,18,13,0.72) 100%), url(${photo})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
             }
           : { backgroundColor: "var(--color-bg-subtle)" }
       }
     >
-      <p className="text-overline text-white/80">{status}</p>
+      <p className="text-overline text-[#edebe0]">{status}</p>
       <p className={cn(size === "large" ? "text-display-l" : "text-heading-l", "text-white")}>{title}</p>
       {size === "large" && facts && facts.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">

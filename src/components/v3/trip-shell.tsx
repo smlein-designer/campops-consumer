@@ -77,12 +77,12 @@ export function TripShell({
       {/* Desktop: plan area + rail, each scrolling independently. */}
       <div className="hidden min-h-0 flex-1 md:flex">
         <div className="scroll-region flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex-1 space-y-6 overflow-y-auto p-8">
+          <div className="flex-1 overflow-y-auto">
             {hero}
-            {children}
+            <div className="space-y-4 px-8 py-6">{children}</div>
           </div>
           {approveBar && (
-            <div className="border-t border-[var(--color-border-default)] p-4">{approveBar}</div>
+            <div className="px-8 pb-6">{approveBar}</div>
           )}
         </div>
         <div
@@ -91,20 +91,21 @@ export function TripShell({
             railWide ? "w-[620px]" : "w-[400px]",
           )}
         >
-          <div className="p-4">
-            <AgentStatus {...agent} />
-          </div>
+          <AgentStatus {...agent} />
           {needsYou && (
-            <div className="px-4 pb-4">
+            <div className="px-5 pt-4">
               <NeedsYouCard {...needsYou} />
             </div>
           )}
-          <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-4">
+          <div className="flex flex-1 flex-col justify-end gap-3 overflow-y-auto p-5">
+            {thread.length > 0 && (
+              <p className="text-caption text-[var(--color-text-tertiary)]">Earlier today</p>
+            )}
             {thread.map((m, i) => (
               <ChatBubble key={i} from={m.from} message={m.message} />
             ))}
           </div>
-          <div className="border-t border-[var(--color-border-default)] p-4">
+          <div className="border-t border-[var(--color-border-default)] px-4 pt-3 pb-5">
             <Composer onSubmit={onComposerSubmit} />
           </div>
         </div>

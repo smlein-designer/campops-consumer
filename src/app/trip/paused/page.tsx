@@ -16,7 +16,7 @@ export default function PausedPage() {
     <TripShell
       chargeStatus="Nothing charged yet"
       hero={
-        <TripHero size="large" status="Trip · Planning" title="Hill Country Weekend" {...GOLDEN_PATH_TRIP_HERO} />
+        <TripHero size="large" status="Trip plan · in progress" title="Lake weekend, Hill Country" {...GOLDEN_PATH_TRIP_HERO} />
       }
       agent={{ state: "paused", title: "Paused", detail: "No new actions until you resume" }}
       thread={[{ from: "agent", message: "Paused. Your holds keep counting down while you're away." }]}

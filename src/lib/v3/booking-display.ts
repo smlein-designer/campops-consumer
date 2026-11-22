@@ -19,8 +19,14 @@ export function bookingCardState(status: Booking["status"]): BookingCardState {
   return "working";
 }
 
+/** Booking Card's "kind" line (Figma 3:42): category + time, e.g. "Horseback · 10:00 to 12:00". */
+export function bookingKindAndTime(booking: Booking): string {
+  const label = bookingKindLabel(booking.kind);
+  return booking.time ? `${label} · ${booking.time.replace("-", " to ")}` : label;
+}
+
 export function bookingMeta(booking: Booking): string {
-  return `${booking.time ? `${booking.time} · ` : ""}$${booking.price}`;
+  return `$${booking.price}`;
 }
 
 /** Groups bookings by their display day, in first-seen order. */
