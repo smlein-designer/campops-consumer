@@ -131,7 +131,11 @@ export function applyTurn(
     next = { ...next, plan: setStep(next.plan, "step-campsite", { status: "active" }) };
     const v2Intent = toV2SearchIntent(next.intent);
     const result = evaluateCampsites(v2Intent);
-    const top = result.candidates[0]?.campsite;
+    // evaluateCampsites always returns candidates, even for "no_match"
+    // (the closest sites, shown for transparency per src/lib/evaluate.ts) —
+    // never presented as a confident recommendation, so the KIND decides
+    // whether to hold, never just whether candidates[0] exists.
+    const top = result.kind !== "no_match" ? result.candidates[0]?.campsite : undefined;
     if (!top) {
       facts.push("Nothing available fits every must-have right now.");
       next = { ...next, needsYouQueue: [...next.needsYouQueue, {
@@ -279,6 +283,7 @@ export function applyTurn(
           dismissedTypes: next.dismissedSuggestionTypes,
           permissions: next.permissions,
           hasPendingDecision: false,
+          bookedActivityIds: next.bookings.filter((b) => b.kind === "activity").map((b) => b.refId),
         });
         if (suggestion && !next.suggestions.some((s) => s.id === suggestion.id)) {
           next = { ...next, suggestions: [...next.suggestions, suggestion] };
@@ -331,6 +336,76 @@ export async function fetchPhrasing(facts: string[]): Promise<string[]> {
 export async function runAgentTurn(trip: Trip, userMessage: string, now: number): Promise<{ trip: Trip; factsToPhrase: string[] }> {
   const extraction = await fetchIntentExtraction(userMessage, trip.intent.requirements);
   return applyTurn(trip, extraction, now);
+}
+
+/**
+ * Accepting a suggestion (Build Brief §10 "never added to the plan or
+ * total without a yes"): only this function moves one from "offered" to
+ * booked — never automatic.
+ */
+export function acceptSuggestion(trip: Trip, suggestionId: string, now: number): { trip: Trip; factsToPhrase: string[] } {
+  const suggestion = trip.suggestions.find((s) => s.id === suggestionId && s.state === "offered");
+  if (!suggestion) return { trip, factsToPhrase: [] };
+  const activity = ACTIVITIES_BY_ID[suggestion.activityId];
+  if (!activity) return { trip, factsToPhrase: [] };
+
+  const price = activityBookingPrice(activity, trip.intent.adults || DEFAULT_PARTY_SIZE);
+  const decision = checkPermission(trip.permissions, { type: "hold", refundable: true, amountUsd: price });
+  const slot = activity.slots[0];
+  const campsiteBooking = trip.bookings.find((b) => b.kind === "campsite");
+
+  const fact = decision.result === "allow" ? `Held ${activity.name} for $${price}.` : `Found ${activity.name} for $${price} — asking before holding it.`;
+
+  let next: Trip = {
+    ...trip,
+    suggestions: trip.suggestions.map((s) => (s.id === suggestionId ? { ...s, state: "added" as const } : s)),
+  };
+
+  if (decision.result === "allow") {
+    const holdId = newId();
+    const bookingId = `b-activity-${activity.id}`;
+    next = {
+      ...next,
+      bookings: [
+        ...next.bookings,
+        {
+          id: bookingId,
+          kind: "activity",
+          refId: activity.id,
+          title: activity.name,
+          day: slot.date,
+          time: `${slot.startTime}-${slot.endTime}`,
+          price,
+          refundTerms: activity.refundTerms,
+          dependsOn: campsiteBooking ? [campsiteBooking.id] : [],
+          status: "held",
+          holdId,
+        },
+      ],
+      holds: [...next.holds, { id: holdId, bookingId, expiresAt: now + HOLD_MINUTES * 60_000, refundable: true, placedUnderPermissionId: decision.permissionId }],
+      events: [...next.events, { id: newId(), timestamp: now, what: fact, permissionId: decision.permissionId, actor: "CampOps" }],
+    };
+  } else {
+    next = {
+      ...next,
+      needsYouQueue: [...next.needsYouQueue, { id: newId(), eyebrow: "Asking before holding", message: `Hold ${activity.name} for $${price}?`, primaryLabel: `Hold · $${price}` }],
+      agent: { ...next.agent, working: false, phase: "awaiting_user", currentStepText: "One item needs a decision" },
+    };
+  }
+
+  return { trip: next, factsToPhrase: [fact] };
+}
+
+/** Dismissing a suggestion: that activity TYPE is never offered again this trip (Build Brief §10). */
+export function dismissSuggestion(trip: Trip, suggestionId: string): Trip {
+  const suggestion = trip.suggestions.find((s) => s.id === suggestionId);
+  if (!suggestion) return trip;
+  const activity = ACTIVITIES_BY_ID[suggestion.activityId];
+  return {
+    ...trip,
+    suggestions: trip.suggestions.map((s) => (s.id === suggestionId ? { ...s, state: "dismissed" as const } : s)),
+    dismissedSuggestionTypes: activity ? [...trip.dismissedSuggestionTypes, activity.type] : trip.dismissedSuggestionTypes,
+  };
 }
 
 export type { NeedsYouItem };

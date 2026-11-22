@@ -266,7 +266,9 @@ export function fireCampsiteUnavailable(trip: Trip, campsiteId: string, now: num
 
   if (!alreadyHeldElsewhere) {
     const result = evaluateCampsites(toV2SearchIntent({ ...next.intent }), new Set([campsiteId]));
-    const recommended = result.candidates[0]?.campsite;
+    // Same rule as the agent loop's own campsite step: no_match candidates
+    // are shown for transparency only, never recommended.
+    const recommended = result.kind !== "no_match" ? result.candidates[0]?.campsite : undefined;
     if (recommended) {
       next = {
         ...next,

@@ -8,7 +8,7 @@ import { useState } from "react";
 import { ClockProvider, useClock } from "@/lib/v3/clock";
 import { TripProvider, useTrip } from "@/lib/v3/store";
 import { emptyTrip } from "@/lib/v3/trip-factory";
-import { fetchPhrasing, runAgentTurn } from "@/lib/v3/agent-loop";
+import { acceptSuggestion, dismissSuggestion, fetchPhrasing, runAgentTurn } from "@/lib/v3/agent-loop";
 import {
   fireCampsiteUnavailable,
   fireForecastChange,
@@ -29,9 +29,12 @@ import { SummaryRow } from "@/components/v3/summary-row";
 import { CommitNote } from "@/components/v3/commit-note";
 import { Button } from "@/components/v3/button";
 import { PaymentForm } from "@/components/v3/payment-form";
+import { SuggestionCard } from "@/components/v3/suggestion-card";
 import { bookingKindLabel } from "@/lib/v3/booking-display";
 import { commitBooking, removeBooking } from "@/lib/v3/authorize";
 import { formatUsd, tripTotal } from "@/lib/v3/money";
+import { ACTIVITIES_BY_ID, providerForActivity } from "@/lib/v3/providers";
+import { photoSrc } from "@/lib/v3/photos";
 import type { Trip } from "@/lib/v3/schemas";
 
 const BOOKED_OR_HELD = (status: Trip["bookings"][number]["status"]) => status === "held" || status === "changed_needs_ok";
@@ -138,6 +141,16 @@ function LiveTripPlan() {
 
   const bookedCount = trip.bookings.filter((b) => BOOKED_OR_HELD(b.status)).length;
   const total = tripTotal(trip.bookings.filter((b) => BOOKED_OR_HELD(b.status)));
+  const offeredSuggestion = trip.suggestions.find((s) => s.state === "offered");
+
+  function handleAcceptSuggestion(suggestionId: string) {
+    const { trip: nextTrip, factsToPhrase } = acceptSuggestion(trip, suggestionId, now);
+    void applyEvent({ trip: nextTrip, factsToPhrase });
+  }
+
+  function handleDismissSuggestion(suggestionId: string) {
+    dispatch({ type: "RESET", trip: dismissSuggestion(trip, suggestionId) });
+  }
 
   if (trip.authorization.approved) {
     return (
@@ -242,6 +255,22 @@ function LiveTripPlan() {
           Tell CampOps about your trip below — dates, dealbreakers, tradeoffs you&apos;re willing to make.
         </p>
       )}
+      {offeredSuggestion &&
+        (() => {
+          const activity = ACTIVITIES_BY_ID[offeredSuggestion.activityId];
+          if (!activity) return null;
+          const provider = providerForActivity(activity);
+          return (
+            <SuggestionCard
+              title={`${activity.name} · $${activity.price}`}
+              reason={offeredSuggestion.reason}
+              source={offeredSuggestion.source}
+              photo={photoSrc(activity.photoKey ?? provider.photoKey ?? "hero")}
+              onAdd={() => handleAcceptSuggestion(offeredSuggestion.id)}
+              onDismiss={() => handleDismissSuggestion(offeredSuggestion.id)}
+            />
+          );
+        })()}
       {busy && <p className="text-body-s text-[var(--color-text-tertiary)]">Working…</p>}
       <DemoPanel
         onFireForecast={() => void applyEvent(fireForecastChange(trip, now))}

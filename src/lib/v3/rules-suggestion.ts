@@ -13,12 +13,15 @@ export function suggestionFor({
   dismissedTypes,
   permissions,
   hasPendingDecision,
+  bookedActivityIds = [],
   activities = ACTIVITIES,
 }: {
   campsite: Campsite;
   dismissedTypes: string[];
   permissions: Permission[];
   hasPendingDecision: boolean;
+  /** Activities already part of the plan — never re-suggested (Build Brief §10 "an optional EXTRA"). */
+  bookedActivityIds?: string[];
   activities?: Activity[];
 }): Suggestion | null {
   if (hasPendingDecision) return null;
@@ -26,7 +29,9 @@ export function suggestionFor({
   const permission = permissions.find((p) => p.id === "suggest_extras");
   if (!permission?.enabled) return null;
 
-  const candidate = activitiesNear(campsite, activities).find((a) => !dismissedTypes.includes(a.type));
+  const candidate = activitiesNear(campsite, activities).find(
+    (a) => !dismissedTypes.includes(a.type) && !bookedActivityIds.includes(a.id),
+  );
   if (!candidate) return null;
 
   const provider = providerForActivity(candidate);

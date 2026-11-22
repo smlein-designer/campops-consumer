@@ -66,6 +66,11 @@ export type CommitResult = { ok: true; trip: Trip } | { ok: false; reason: strin
  * surfaced instead of silently committed.
  */
 export function commitBooking(trip: Trip, paymentMethodLabel: string, now: number): CommitResult {
+  // Incomplete authorization (Build Brief §15 evaluation scenario): never
+  // approve without a payment method, no matter who calls this.
+  if (!paymentMethodLabel.trim()) {
+    return { ok: false, reason: "A payment method is required before booking.", expiredBookingIds: [] };
+  }
   const reverify = reverifyHolds(trip, now);
   if (!reverify.ok) {
     return { ok: false, reason: "One or more holds have expired — refresh before booking.", expiredBookingIds: reverify.expiredBookingIds };
