@@ -5,11 +5,14 @@ export function ConversationPeek({
   message,
   showApprove,
   onOpen,
+  onReview,
 }: {
   message: string;
   showApprove?: boolean;
   /** Tapping the peek (or dragging the handle) opens the full conversation as a sheet (Handoff Spec §2.2). */
   onOpen?: () => void;
+  /** Tapping the Review button goes straight to Review and Approve, instead of opening the chat sheet. */
+  onReview?: () => void;
 }) {
   return (
     // A clickable div, not a <button>: it contains the Review button, and
@@ -24,7 +27,16 @@ export function ConversationPeek({
       <SheetHandle />
       <div className="flex items-center gap-3">
         <p className="min-w-0 flex-1 truncate text-body-m text-[var(--color-text-primary)]">{message}</p>
-        {showApprove && <Button variant="primary" label="Review" />}
+        {showApprove && (
+          <Button
+            variant="primary"
+            label="Review"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReview?.();
+            }}
+          />
+        )}
       </div>
     </div>
   );

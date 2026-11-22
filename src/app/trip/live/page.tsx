@@ -23,13 +23,25 @@ import { TripShell } from "@/components/v3/trip-shell";
 import { Itinerary } from "@/components/v3/itinerary";
 import { ApproveBar } from "@/components/v3/approve-bar";
 import { DemoPanel } from "@/components/v3/demo-panel";
+import { TopNav } from "@/components/v3/top-nav";
+import { ReviewLineItem } from "@/components/v3/review-line-item";
+import { SummaryRow } from "@/components/v3/summary-row";
+import { CommitNote } from "@/components/v3/commit-note";
+import { Button } from "@/components/v3/button";
+import { PaymentForm } from "@/components/v3/payment-form";
+import { bookingKindLabel } from "@/lib/v3/booking-display";
+import { commitBooking, removeBooking } from "@/lib/v3/authorize";
 import { formatUsd, tripTotal } from "@/lib/v3/money";
 import type { Trip } from "@/lib/v3/schemas";
+
+const BOOKED_OR_HELD = (status: Trip["bookings"][number]["status"]) => status === "held" || status === "changed_needs_ok";
 
 function LiveTripPlan() {
   const { trip, dispatch } = useTrip();
   const { now } = useClock();
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"plan" | "review">("plan");
+  const [commitError, setCommitError] = useState<string | null>(null);
 
   /** Applies a scripted event or resolver's result as one agent-voiced turn (no user message). */
   async function applyEvent(result: ScriptedEventResult, baseTrip: Trip = trip) {
@@ -92,6 +104,114 @@ function LiveTripPlan() {
     }
   }
 
+  function handleRemove(bookingId: string) {
+    dispatch({ type: "RESET", trip: removeBooking(trip, bookingId, now) });
+  }
+
+  function handleSavePayment(label: string) {
+    dispatch({ type: "SET_AUTHORIZATION", authorization: { paymentMethodLabel: label } });
+  }
+
+  function handleCommit() {
+    if (!trip.authorization.paymentMethodLabel) return;
+    const result = commitBooking(trip, trip.authorization.paymentMethodLabel, now);
+    if (!result.ok) {
+      setCommitError(result.reason);
+      return;
+    }
+    setCommitError(null);
+    dispatch({
+      type: "RESET",
+      trip: {
+        ...result.trip,
+        thread: [
+          ...result.trip.thread,
+          {
+            id: newId(),
+            from: "agent",
+            message: `You're all set — every item is confirmed and charged to ${result.trip.authorization.paymentMethodLabel}.`,
+          },
+        ],
+      },
+    });
+  }
+
+  const bookedCount = trip.bookings.filter((b) => BOOKED_OR_HELD(b.status)).length;
+  const total = tripTotal(trip.bookings.filter((b) => BOOKED_OR_HELD(b.status)));
+
+  if (trip.authorization.approved) {
+    return (
+      <TripShell
+        chargeStatus={`Booked · ${formatUsd(total)} charged`}
+        agent={{ state: "working", title: "Trip booked", detail: "Every item is confirmed" }}
+        thread={trip.thread.map((m) => ({ from: m.from, message: m.message }))}
+        approveBar={
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-[var(--color-bg-inverse)] px-5 py-4">
+            <p className="text-label-l text-[var(--color-text-on-inverse)]">
+              {bookedCount} bookings confirmed · charged to {trip.authorization.paymentMethodLabel}
+            </p>
+          </div>
+        }
+      >
+        <Itinerary title="Your bookings" bookings={trip.bookings} />
+      </TripShell>
+    );
+  }
+
+  if (view === "review") {
+    return (
+      <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
+        <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <TopNav active="Trips" chargeStatus="Nothing charged yet" />
+        </div>
+        <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-10">
+          <div className="space-y-2">
+            <h1 className="text-heading-l text-[var(--color-text-primary)]">Review and approve</h1>
+            <CommitNote message="Approving books every item below and charges your card. Nothing happens until you approve." />
+          </div>
+
+          <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-2">
+            {trip.bookings.map((booking) => (
+              <ReviewLineItem
+                key={booking.id}
+                title={`${bookingKindLabel(booking.kind)} · ${booking.title}`}
+                when={`${booking.day}${booking.time ? ` · ${booking.time}` : ""}`}
+                terms={booking.refundTerms}
+                flag={booking.changeNote}
+                amount={`$${booking.price}`}
+                onRemove={() => handleRemove(booking.id)}
+              />
+            ))}
+            {trip.bookings.length === 0 && (
+              <p className="p-4 text-body-m text-[var(--color-text-secondary)]">Nothing left to review.</p>
+            )}
+          </div>
+
+          <SummaryRow label="Total" value={formatUsd(total)} />
+
+          {trip.authorization.paymentMethodLabel ? (
+            <SummaryRow label="Payment method" value={trip.authorization.paymentMethodLabel} />
+          ) : (
+            <PaymentForm onSave={handleSavePayment} />
+          )}
+
+          {commitError && <p className="text-body-s text-[var(--color-status-attention)]">{commitError}</p>}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="primary"
+              size="large"
+              label={`Book ${bookedCount} items · charge ${formatUsd(total)}`}
+              onClick={handleCommit}
+              disabled={!trip.authorization.paymentMethodLabel || bookedCount === 0}
+            />
+            <Button variant="ghost" label="Back" onClick={() => setView("plan")} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <TripShell
       chargeStatus="Nothing charged yet"
@@ -111,7 +231,8 @@ function LiveTripPlan() {
           : undefined
       }
       thread={trip.thread.map((m) => ({ from: m.from, message: m.message }))}
-      approveBar={held ? <ApproveBar amount={`${formatUsd(tripTotal(trip.bookings))} total`} summary="Nothing charged yet" /> : undefined}
+      approveBar={held ? <ApproveBar amount={`${formatUsd(tripTotal(trip.bookings))} total`} summary="Nothing charged yet" onReview={() => setView("review")} /> : undefined}
+      onReview={() => setView("review")}
       onComposerSubmit={busy ? undefined : handleSubmit}
     >
       {trip.bookings.length > 0 ? (
@@ -129,7 +250,11 @@ function LiveTripPlan() {
           if (trailRide) void applyEvent(fireHoldExpiry(trip, trailRide.id, now));
         }}
         onFireCampsiteUnavailable={() => void applyEvent(fireCampsiteUnavailable(trip, "cedar-point-3", now))}
-        onReset={() => dispatch({ type: "RESET", trip: emptyTrip() })}
+        onReset={() => {
+          setView("plan");
+          setCommitError(null);
+          dispatch({ type: "RESET", trip: emptyTrip() });
+        }}
       />
     </TripShell>
   );

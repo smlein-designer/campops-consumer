@@ -8,6 +8,7 @@ import { Badge } from "@/components/campops/badge";
 import { SummaryRow } from "@/components/campops/summary-row";
 import { text } from "@/lib/typography";
 import { nonRefundableAfter } from "@/lib/reservation";
+import { cardLabel, DEMO_CARD, EMPTY_CARD, validateCard, type CardErrors, type CardFields } from "@/lib/payment-card";
 import type { Reservation } from "@/lib/schemas";
 
 /**
@@ -329,33 +330,8 @@ function CancelReservation({
 }
 
 type PaymentChoice = "card" | "google" | "apple";
-type CardFields = { number: string; name: string; expiry: string; cvc: string };
-type CardErrors = Partial<Record<keyof CardFields, string>>;
-
-const EMPTY_CARD: CardFields = { number: "", name: "", expiry: "", cvc: "" };
-// Clearly-labelled demo values, filled in visibly by "Use a demo card" —
-// no real payment processing in this POC.
-const DEMO_CARD: CardFields = { number: "4242 4242 4242 4471", name: "Demo Camper", expiry: "12 / 29", cvc: "123" };
 
 const inputClass = `${text.bodySm} h-9 w-full min-w-0 rounded-md border border-border bg-card px-2 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive`;
-
-/** Format checks only — enough to never treat an empty or partial form as a
- * card. (Mock payments: nothing is ever charged.) */
-function validateCard(card: CardFields): CardErrors {
-  const errors: CardErrors = {};
-  const digits = card.number.replace(/\D/g, "");
-  if (digits.length < 13 || digits.length > 19) errors.number = "Enter a card number.";
-  if (!card.name.trim()) errors.name = "Enter the name on the card.";
-  if (!/^\s*(0[1-9]|1[0-2])\s*\/\s*\d{2}\s*$/.test(card.expiry)) errors.expiry = "Use MM / YY.";
-  if (!/^\s*\d{3,4}\s*$/.test(card.cvc)) errors.cvc = "Enter the 3–4 digit code.";
-  return errors;
-}
-
-function cardLabel(cardNumber: string): string {
-  const digits = cardNumber.replace(/\D/g, "");
-  const brand = digits[0] === "4" ? "Visa" : digits[0] === "5" ? "Mastercard" : digits[0] === "3" ? "Amex" : "Card";
-  return `${brand} •••• ${digits.slice(-4)}`;
-}
 
 function PaymentForm({
   cancellationPolicy,

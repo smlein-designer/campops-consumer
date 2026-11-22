@@ -37,6 +37,7 @@ export function TripShell({
   needsYou,
   thread,
   approveBar,
+  onReview,
   railWide = false,
   onComposerSubmit,
   children,
@@ -54,6 +55,8 @@ export function TripShell({
   needsYou?: TripShellNeedsYou;
   thread: ThreadMessage[];
   approveBar?: ReactNode;
+  /** Mobile Conversation Peek's "Review" button — goes straight to Review and Approve. */
+  onReview?: () => void;
   railWide?: boolean;
   /** Wires the Composer to a real handler (the live agent loop); omitted on the static fixture screens. */
   onComposerSubmit?: (message: string) => void;
@@ -119,6 +122,7 @@ export function TripShell({
             message={lastMessage}
             showApprove={!!approveBar}
             onOpen={() => setSheetOpen(true)}
+            onReview={onReview}
           />
         </div>
       </div>
