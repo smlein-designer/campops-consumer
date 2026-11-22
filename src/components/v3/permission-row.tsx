@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Toggle } from "@/components/v3/toggle";
 
 export function PermissionRow({
@@ -9,7 +10,8 @@ export function PermissionRow({
 }: {
   title: string;
   description: string;
-  limits?: string;
+  /** Plain text, or a control such as a Select Field (Handoff Spec §3 "Permission limits"). */
+  limits?: ReactNode;
   control: "on" | "off" | "locked";
   onChange?: (next: boolean) => void;
 }) {
@@ -18,7 +20,9 @@ export function PermissionRow({
       <div className="min-w-0 space-y-1">
         <p className="text-label-l text-[var(--color-text-primary)]">{title}</p>
         <p className="text-body-s text-[var(--color-text-secondary)]">{description}</p>
-        {limits && <p className="text-caption text-[var(--color-text-tertiary)]">{limits}</p>}
+        {limits && (
+          <div className="text-caption text-[var(--color-text-tertiary)]">{limits}</div>
+        )}
       </div>
       {control === "locked" ? (
         // Locked rows (book and charge) cannot be turned off (Handoff Spec §3).
