@@ -733,7 +733,7 @@ export const CAMPSITES: Campsite[] = [
     pricePerNight: 84,
     petPolicy: { allowed: true, maxPets: 2 },
     familyFeatures: [],
-    amenities: ["fire_pit", "picnic_table", "potable_water", "boat_launch", "restroom"],
+    amenities: ["fire_pit", "picnic_table", "potable_water", "boat_launch", "restroom", "hiking_trails"],
     waterAccess: { nearby: true, directAccess: true, type: "lake" },
     seclusion: "medium",
     noiseLevel: "low",

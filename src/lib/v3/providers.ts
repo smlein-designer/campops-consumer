@@ -124,6 +124,10 @@ export const ACTIVITIES: Activity[] = [
   },
 ];
 
+export const ACTIVITIES_BY_ID: Record<string, Activity> = Object.fromEntries(
+  ACTIVITIES.map((activity) => [activity.id, activity]),
+);
+
 export function providerForActivity(activity: Activity): Provider {
   const provider = PROVIDERS.find((p) => p.id === activity.providerId);
   if (!provider) throw new Error(`No provider for activity ${activity.id}`);
