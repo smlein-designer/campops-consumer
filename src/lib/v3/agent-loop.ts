@@ -79,19 +79,34 @@ function bookedActivityRefs(bookings: Booking[]) {
   return bookings.filter((b) => b.kind === "activity" && b.status === "held");
 }
 
+export type TurnCheckpoint = { trip: Trip; facts: string[] };
+
 /**
  * The deterministic planner/executor core — no network calls. Given the
  * current Trip and this turn's structured extraction, advances the plan as
  * far as it can go without a decision, stopping at the first thing that
  * needs the user (never more than one Needs You item at a time, Handoff
  * Spec §2.3).
+ *
+ * Returns `checkpoints`, an ordered sequence of intermediate states — the
+ * UI replays these one at a time (Build Brief §17: "progress timing...
+ * recommend paced") so the agent's own steps (What I heard + My plan,
+ * then each hold) are actually visible, rather than jumping straight from
+ * a message to a fully-resolved trip in one invisible beat.
  */
 export function applyTurn(
   trip: Trip,
   extraction: V3IntentExtraction,
   now: number,
-): { trip: Trip; factsToPhrase: string[] } {
+): { trip: Trip; factsToPhrase: string[]; checkpoints: TurnCheckpoint[] } {
   const facts: string[] = [];
+  const checkpoints: TurnCheckpoint[] = [];
+  let factsCheckpointed = 0;
+  function checkpoint() {
+    checkpoints.push({ trip: next, facts: facts.slice(factsCheckpointed) });
+    factsCheckpointed = facts.length;
+  }
+
   let next: Trip = {
     ...trip,
     intent: {
@@ -110,18 +125,24 @@ export function applyTurn(
   if (extraction.status === "unsupported") {
     facts.push(extraction.unsupportedReason ?? "CampOps can't help with that part of the request.");
     next = { ...next, agent: { ...next.agent, working: false, phase: "awaiting_user" } };
-    return { trip: next, factsToPhrase: facts };
+    checkpoint();
+    return { trip: next, factsToPhrase: facts, checkpoints };
   }
   if (extraction.status === "needs_clarification") {
     facts.push(extraction.clarificationQuestion ?? "Could you say a bit more about what you're looking for?");
     next = { ...next, agent: { ...next.agent, working: false, phase: "awaiting_user" } };
-    return { trip: next, factsToPhrase: facts };
+    checkpoint();
+    return { trip: next, factsToPhrase: facts, checkpoints };
   }
 
   next = { ...next, plan: buildPlan(next.intent.requirements).map((fresh) => {
     const existing = next.plan.find((s) => s.id === fresh.id);
     return existing ? { ...fresh, status: existing.status, detail: existing.detail } : fresh;
   }) };
+  // First beat: "What I heard" + "My plan" become visible before anything
+  // is searched or held (Handoff Spec §4.1 "Start · After First Message").
+  next = { ...next, agent: { ...next.agent, working: true, phase: "searching", currentStepText: "Looking at what you're after" } };
+  checkpoint();
 
   let blocked = false;
 
@@ -145,6 +166,7 @@ export function applyTurn(
         primaryLabel: "Widen search",
       }] };
       blocked = true;
+      checkpoint();
     } else {
       const dateRange = computeDateRange(next.intent.checkIn || "Apr 16", next.intent.checkOut || "Apr 18");
       const nights = dateRange?.nights ?? DEFAULT_NIGHTS;
@@ -174,6 +196,7 @@ export function applyTurn(
         };
         facts.push(`Held ${booking.title} for $${price}.`);
         heldCampsiteBooking = booking;
+        checkpoint();
       } else {
         next = { ...next, needsYouQueue: [...next.needsYouQueue, {
           id: newId(),
@@ -183,6 +206,7 @@ export function applyTurn(
         }] };
         facts.push(`Found ${top.campgroundName}, ${top.siteName} for $${price} — asking before holding it.`);
         blocked = true;
+        checkpoint();
       }
     }
   }
@@ -204,6 +228,7 @@ export function applyTurn(
       if (!activity) {
         next = { ...next, plan: setStep(next.plan, step.id, { status: "done", detail: "Not available at this campsite" }) };
         facts.push(`${ACTIVITY_TYPE_LABEL[type]} isn't available at ${campsite.campgroundName} — skipping it.`);
+        checkpoint();
         continue;
       }
 
@@ -224,6 +249,7 @@ export function applyTurn(
           }] };
           facts.push(`${activity.name} overlaps ${overlap.conflictingWith.name} — asking which to keep.`);
           blocked = true;
+          checkpoint();
           continue;
         }
       }
@@ -255,6 +281,7 @@ export function applyTurn(
           events: [...next.events, { id: newId(), timestamp: now, what: `Held ${booking.title} for $${price}.`, permissionId: decision.permissionId, actor: "CampOps" }],
         };
         facts.push(`Held ${booking.title} for $${price}.`);
+        checkpoint();
       } else {
         next = { ...next, needsYouQueue: [...next.needsYouQueue, {
           id: newId(),
@@ -264,6 +291,7 @@ export function applyTurn(
         }] };
         facts.push(`Found ${activity.name} for $${price} — asking before holding it.`);
         blocked = true;
+        checkpoint();
       }
     }
   }
@@ -271,6 +299,7 @@ export function applyTurn(
   const allDone = next.plan.every((s) => s.status === "done");
   if (blocked || next.needsYouQueue.length > 0) {
     next = { ...next, agent: { ...next.agent, working: false, phase: "awaiting_user", currentStepText: "One item needs a decision" } };
+    checkpoint();
   } else if (allDone) {
     // Natural pause: at most one suggestion, never mid-decision (Build Brief §10).
     if (heldCampsiteBooking) {
@@ -295,11 +324,13 @@ export function applyTurn(
       agent: { ...next.agent, working: false, phase: "complete", currentStepText: "Everything is held · ready to book" },
     };
     facts.push("Everything is held · ready to book.");
+    checkpoint();
   } else {
     next = { ...next, agent: { ...next.agent, working: true, phase: "holding", currentStepText: "Working through the plan" } };
+    checkpoint();
   }
 
-  return { trip: next, factsToPhrase: facts };
+  return { trip: next, factsToPhrase: facts, checkpoints };
 }
 
 export async function fetchIntentExtraction(
@@ -333,7 +364,11 @@ export async function fetchPhrasing(facts: string[]): Promise<string[]> {
 }
 
 /** The impure entry point: extracts intent via the model, then runs the deterministic planner. */
-export async function runAgentTurn(trip: Trip, userMessage: string, now: number): Promise<{ trip: Trip; factsToPhrase: string[] }> {
+export async function runAgentTurn(
+  trip: Trip,
+  userMessage: string,
+  now: number,
+): Promise<{ trip: Trip; factsToPhrase: string[]; checkpoints: TurnCheckpoint[] }> {
   const extraction = await fetchIntentExtraction(userMessage, trip.intent.requirements);
   return applyTurn(trip, extraction, now);
 }

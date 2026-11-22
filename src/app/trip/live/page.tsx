@@ -20,7 +20,10 @@ import {
 } from "@/lib/v3/scripted-events";
 import { newId } from "@/lib/id";
 import { TripShell } from "@/components/v3/trip-shell";
+import { LandingHero } from "@/components/v3/landing-hero";
 import { Itinerary } from "@/components/v3/itinerary";
+import { RequirementChip } from "@/components/v3/requirement-chip";
+import { PlanStep } from "@/components/v3/plan-step";
 import { ApproveBar } from "@/components/v3/approve-bar";
 import { DemoPanel } from "@/components/v3/demo-panel";
 import { TopNav } from "@/components/v3/top-nav";
@@ -38,6 +41,10 @@ import { photoSrc } from "@/lib/v3/photos";
 import type { Trip } from "@/lib/v3/schemas";
 
 const BOOKED_OR_HELD = (status: Trip["bookings"][number]["status"]) => status === "held" || status === "changed_needs_ok";
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function LiveTripPlan() {
   const { trip, dispatch } = useTrip();
@@ -68,19 +75,23 @@ function LiveTripPlan() {
     setBusy(true);
     dispatch({ type: "SET_AGENT", agent: { working: true, phase: "interpreting", currentStepText: "Reading your message" } });
     try {
-      const { trip: nextTrip, factsToPhrase } = await runAgentTurn(trip, message, now);
-      const agentLines = await fetchPhrasing(factsToPhrase);
-      dispatch({
-        type: "RESET",
-        trip: {
-          ...nextTrip,
-          thread: [
-            ...trip.thread,
-            { id: newId(), from: "user", message },
-            ...agentLines.map((line) => ({ id: newId(), from: "agent" as const, message: line })),
-          ],
-        },
-      });
+      const { factsToPhrase, checkpoints } = await runAgentTurn(trip, message, now);
+      // One phrasing call for the whole turn, then pace the REVEAL only
+      // (Build Brief §17 "progress timing... recommend paced") — each
+      // checkpoint (What I heard + My plan, then each hold) becomes its
+      // own visible beat instead of the trip jumping straight to its final
+      // state in one invisible step.
+      const allLines = await fetchPhrasing(factsToPhrase);
+      let lineCursor = 0;
+      let thread = [...trip.thread, { id: newId(), from: "user" as const, message }];
+      for (let i = 0; i < checkpoints.length; i++) {
+        const cp = checkpoints[i];
+        const lines = allLines.slice(lineCursor, lineCursor + cp.facts.length);
+        lineCursor += cp.facts.length;
+        thread = [...thread, ...lines.map((line) => ({ id: newId(), from: "agent" as const, message: line }))];
+        dispatch({ type: "RESET", trip: { ...cp.trip, thread } });
+        if (i < checkpoints.length - 1) await sleep(650);
+      }
     } catch (err) {
       dispatch({
         type: "ADD_MESSAGE",
@@ -150,6 +161,12 @@ function LiveTripPlan() {
 
   function handleDismissSuggestion(suggestionId: string) {
     dispatch({ type: "RESET", trip: dismissSuggestion(trip, suggestionId) });
+  }
+
+  // Start · Empty (Handoff Spec §4.1 node 5:64): before the first message,
+  // show the real designed landing page, not a bare composer.
+  if (trip.thread.length === 0) {
+    return <LandingHero onSubmit={handleSubmit} busy={busy} />;
   }
 
   if (trip.authorization.approved) {
@@ -248,13 +265,33 @@ function LiveTripPlan() {
       onReview={() => setView("review")}
       onComposerSubmit={busy ? undefined : handleSubmit}
     >
+      {trip.intent.requirements.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-heading-m text-[var(--color-text-primary)]">What I heard</h2>
+          <div className="flex flex-wrap gap-2">
+            {trip.intent.requirements.map((r) => (
+              <RequirementChip key={r.id} type={r.changed ? "changed" : r.tier === "must" ? "mustHave" : "niceToHave"} label={r.label} />
+            ))}
+          </div>
+        </div>
+      )}
+      {trip.plan.length > 0 && trip.bookings.length === 0 && (
+        <div className="space-y-3">
+          <h2 className="text-heading-m text-[var(--color-text-primary)]">My plan</h2>
+          <div className="space-y-1">
+            {trip.plan.map((step, i) => (
+              <PlanStep key={step.id} index={i + 1} step={step.label} detail={step.detail} state={step.status} />
+            ))}
+          </div>
+        </div>
+      )}
       {trip.bookings.length > 0 ? (
         <Itinerary bookings={trip.bookings} />
-      ) : (
+      ) : trip.intent.requirements.length === 0 ? (
         <p className="text-body-m text-[var(--color-text-secondary)]">
           Tell CampOps about your trip below — dates, dealbreakers, tradeoffs you&apos;re willing to make.
         </p>
-      )}
+      ) : null}
       {offeredSuggestion &&
         (() => {
           const activity = ACTIVITIES_BY_ID[offeredSuggestion.activityId];
