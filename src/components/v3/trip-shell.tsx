@@ -38,6 +38,7 @@ export function TripShell({
   thread,
   approveBar,
   railWide = false,
+  onComposerSubmit,
   children,
 }: {
   chargeStatus: string;
@@ -54,6 +55,8 @@ export function TripShell({
   thread: ThreadMessage[];
   approveBar?: ReactNode;
   railWide?: boolean;
+  /** Wires the Composer to a real handler (the live agent loop); omitted on the static fixture screens. */
+  onComposerSubmit?: (message: string) => void;
   children: ReactNode;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -99,7 +102,7 @@ export function TripShell({
             ))}
           </div>
           <div className="border-t border-[var(--color-border-default)] p-4">
-            <Composer />
+            <Composer onSubmit={onComposerSubmit} />
           </div>
         </div>
       </div>
@@ -137,7 +140,7 @@ export function TripShell({
               ))}
             </div>
             <div className="border-t border-[var(--color-border-default)] p-4">
-              <Composer />
+              <Composer onSubmit={onComposerSubmit} />
             </div>
           </div>
         </div>

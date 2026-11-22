@@ -10,9 +10,11 @@ import type {
   NeedsYouItem,
   Permission,
   Suggestion,
+  ThreadMessage,
   Trip,
   TripEvent,
   TripPlanStep,
+  V3TripIntent,
 } from "@/lib/v3/schemas";
 
 /**
@@ -23,6 +25,8 @@ import type {
  * engines built in later stages; the store itself is agnostic of them.
  */
 export type TripAction =
+  | { type: "ADD_MESSAGE"; message: ThreadMessage }
+  | { type: "SET_INTENT"; intent: V3TripIntent }
   | { type: "SET_PLAN"; plan: TripPlanStep[] }
   | { type: "SET_PLAN_STEP_STATUS"; stepId: string; status: TripPlanStep["status"] }
   | { type: "SET_AGENT"; agent: Partial<AgentState> }
@@ -43,6 +47,10 @@ export type TripAction =
 
 export function tripReducer(trip: Trip, action: TripAction): Trip {
   switch (action.type) {
+    case "ADD_MESSAGE":
+      return { ...trip, thread: [...trip.thread, action.message] };
+    case "SET_INTENT":
+      return { ...trip, intent: action.intent };
     case "SET_PLAN":
       return { ...trip, plan: action.plan };
     case "SET_PLAN_STEP_STATUS":

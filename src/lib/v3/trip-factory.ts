@@ -61,6 +61,7 @@ export function emptyTrip(): Trip {
       budgetUsd: null,
       requirements: [],
     },
+    thread: [],
     plan: [],
     agent: { working: false, phase: "interpreting", paused: false, currentStepText: "" },
     bookings: [],

@@ -236,6 +236,10 @@ export type NeedsYouItem = {
   secondaryLabel?: string;
 };
 
+// ---- Conversation thread --------------------------------------------------
+
+export type ThreadMessage = { id: string; from: "user" | "agent"; message: string };
+
 // ---- Activity record (Build Brief §7, §11) -------------------------------
 
 export type TripEventActor = "You" | "CampOps";
@@ -262,6 +266,7 @@ export type Authorization = {
 
 export type Trip = {
   intent: V3TripIntent;
+  thread: ThreadMessage[];
   plan: TripPlanStep[];
   agent: AgentState;
   bookings: Booking[];
