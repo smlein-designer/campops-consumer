@@ -44,7 +44,7 @@ export function fireForecastChange(trip: Trip, now: number): ScriptedEventResult
     conditions: [...trip.conditions, condition],
     events: [
       ...trip.events,
-      { id: newId(), timestamp: now, what: condition.description, permissionId: null, actor: "CampOps" },
+      { id: newId(), timestamp: now, what: condition.description, permissionId: null, actor: "CampOps", kind: "change" },
     ],
   };
 
@@ -84,6 +84,7 @@ export function fireForecastChange(trip: Trip, now: number): ScriptedEventResult
         what: `Proposed moving the pontoon to Sunday ${altSlot.startTime}-${altSlot.endTime}.`,
         permissionId: decision.permissionId,
         actor: "CampOps",
+        kind: "change",
         details: { before: "Sat 14:00-18:00", after: `Sun ${altSlot.startTime}-${altSlot.endTime} (proposed)`, reason: condition.description },
       },
     ],
@@ -125,7 +126,7 @@ export function resolveForecastDecision(trip: Trip, itemId: string, keepProposed
       ...trip,
       bookings: trip.bookings.map((b) => (b.id === pontoonBooking.id ? updatedBooking : b)),
       needsYouQueue: trip.needsYouQueue.filter((n) => n.id !== itemId),
-      events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: null, actor: "You" }],
+      events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: null, actor: "You", kind: "decision" }],
       agent: { ...trip.agent, working: false, phase: "complete", currentStepText: "Everything is held · ready to book" },
     },
     factsToPhrase: [fact],
@@ -155,7 +156,7 @@ export function fireHoldExpiry(trip: Trip, bookingId: string, now: number): Scri
           { id: holdId, bookingId: booking.id, expiresAt: now + 20 * 60_000, refundable: true, placedUnderPermissionId: decision.permissionId },
         ],
         bookings: trip.bookings.map((b) => (b.id === bookingId ? { ...b, holdId } : b)),
-        events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: decision.permissionId, actor: "CampOps" }],
+        events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: decision.permissionId, actor: "CampOps", kind: "hold" }],
       },
       factsToPhrase: [fact],
     };
@@ -190,7 +191,7 @@ export function resolveHoldExpiryRehold(trip: Trip, itemId: string, bookingId: s
       bookings: trip.bookings.map((b) => (b.id === bookingId ? { ...b, status: "held" as const, holdId } : b)),
       holds: [...trip.holds, { id: holdId, bookingId, expiresAt: now + 20 * 60_000, refundable: true, placedUnderPermissionId: "rehold_on_expiry" }],
       needsYouQueue: trip.needsYouQueue.filter((n) => n.id !== itemId),
-      events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: "rehold_on_expiry", actor: "You" }],
+      events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: "rehold_on_expiry", actor: "You", kind: "hold" }],
       agent: { ...trip.agent, working: false, phase: "complete", currentStepText: "Everything is held · ready to book" },
     },
     factsToPhrase: [fact],
@@ -227,7 +228,7 @@ export function resolveCampsiteUnavailableHold(trip: Trip, itemId: string, camps
       holds: [...trip.holds, { id: holdId, bookingId, expiresAt: now + 20 * 60_000, refundable: true, placedUnderPermissionId: "hold_refundable" }],
       plan: trip.plan.map((s) => (s.id === "step-campsite" ? { ...s, status: "done" as const, detail: `${booking.title} — held` } : s)),
       needsYouQueue: trip.needsYouQueue.filter((n) => n.id !== itemId),
-      events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: "hold_refundable", actor: "You" }],
+      events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: "hold_refundable", actor: "You", kind: "hold" }],
       agent: { ...trip.agent, working: false, phase: "complete", currentStepText: "Everything is held · ready to book" },
     },
     factsToPhrase: [fact],
@@ -250,7 +251,7 @@ export function fireCampsiteUnavailable(trip: Trip, campsiteId: string, now: num
     ...trip,
     events: [
       ...trip.events,
-      { id: newId(), timestamp: now, what: `${lost.campgroundName}, ${lost.siteName} was booked by another party.`, permissionId: null, actor: "CampOps" },
+      { id: newId(), timestamp: now, what: `${lost.campgroundName}, ${lost.siteName} was booked by another party.`, permissionId: null, actor: "CampOps", kind: "change" },
     ],
   };
   const facts = [`${lost.campgroundName}, ${lost.siteName} was just booked by someone else.`];

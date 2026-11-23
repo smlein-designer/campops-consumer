@@ -42,6 +42,7 @@ export function TripShell({
   onComposerSubmit,
   composerPlaceholder,
   threadFooter,
+  onNavigate,
   children,
 }: {
   chargeStatus: string;
@@ -65,6 +66,8 @@ export function TripShell({
   composerPlaceholder?: string;
   /** A non-text card appended after the thread's chat bubbles (e.g. a Clarifying Question). */
   threadFooter?: ReactNode;
+  /** Real in-app navigation for the desktop TopNav (the live page only). */
+  onNavigate?: (item: "Trips" | "Activity" | "Permissions") => void;
   children: ReactNode;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -76,7 +79,7 @@ export function TripShell({
           bar — the Trip Hero itself is the header. Secondary mobile screens
           use Mobile Header instead (§4.2), not this nav. */}
       <div className="hidden border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)] md:block">
-        <TopNav active="Trips" chargeStatus={chargeStatus} />
+        <TopNav active="Trips" chargeStatus={chargeStatus} onNavigate={onNavigate} />
       </div>
 
       {/* Desktop: plan area + rail, each scrolling independently. */}

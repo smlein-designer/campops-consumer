@@ -38,6 +38,7 @@ export function removeBooking(trip: Trip, bookingId: string, now: number): Trip 
         what: `Removed ${b.title}.`,
         permissionId: null,
         actor: "You" as const,
+        kind: "decision" as const,
       })),
     ],
   };
@@ -100,6 +101,7 @@ export function commitBooking(trip: Trip, paymentMethodLabel: string, now: numbe
           what: `Booked ${bookedCount} items, charged ${formatUsd(total)} to ${paymentMethodLabel}.`,
           permissionId: "book_and_charge",
           actor: "You",
+          kind: "decision",
         },
       ],
     },

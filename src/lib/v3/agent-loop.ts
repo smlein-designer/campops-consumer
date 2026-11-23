@@ -137,6 +137,7 @@ function releaseBookingAndDependents(trip: Trip, bookingId: string, now: number)
         what: `Released ${b.title} — a new requirement meant it no longer fit.`,
         permissionId: null,
         actor: "CampOps" as const,
+        kind: "change" as const,
       })),
     ],
   };
@@ -184,6 +185,13 @@ export function continueTrip(
     next = { ...next, plan: setStep(next.plan, "step-campsite", { status: "active" }) };
     const v2Intent = toV2SearchIntent(next.intent);
     const result = evaluateCampsites(v2Intent);
+    next = {
+      ...next,
+      events: [
+        ...next.events,
+        { id: newId(), timestamp: now, what: "Searched for a matching campsite.", permissionId: null, actor: "CampOps", kind: "search" },
+      ],
+    };
     // evaluateCampsites always returns candidates, even for "no_match"
     // (the closest sites, shown for transparency per src/lib/evaluate.ts) —
     // never presented as a confident recommendation, so the KIND decides
@@ -229,7 +237,7 @@ export function continueTrip(
           bookings: [...next.bookings, booking],
           holds: [...next.holds, { id: holdId, bookingId, expiresAt: now + HOLD_MINUTES * 60_000, refundable: true, placedUnderPermissionId: decision.permissionId }],
           plan: setStep(next.plan, "step-campsite", { status: "done", detail: `${booking.title} — held` }),
-          events: [...next.events, { id: newId(), timestamp: now, what: `Held ${booking.title} for $${price}.`, permissionId: decision.permissionId, actor: "CampOps" }],
+          events: [...next.events, { id: newId(), timestamp: now, what: `Held ${booking.title} for $${price}.`, permissionId: decision.permissionId, actor: "CampOps", kind: "hold" }],
         };
         facts.push(`Held ${booking.title} for $${price}.`);
         heldCampsiteBooking = booking;
@@ -315,7 +323,7 @@ export function continueTrip(
           bookings: [...next.bookings, booking],
           holds: [...next.holds, { id: holdId, bookingId, expiresAt: now + HOLD_MINUTES * 60_000, refundable: true, placedUnderPermissionId: decision.permissionId }],
           plan: setStep(next.plan, step.id, { status: "done", detail: `${booking.title} — held` }),
-          events: [...next.events, { id: newId(), timestamp: now, what: `Held ${booking.title} for $${price}.`, permissionId: decision.permissionId, actor: "CampOps" }],
+          events: [...next.events, { id: newId(), timestamp: now, what: `Held ${booking.title} for $${price}.`, permissionId: decision.permissionId, actor: "CampOps", kind: "hold" }],
         };
         facts.push(`Held ${booking.title} for $${price}.`);
         checkpoint();
@@ -667,7 +675,7 @@ export function acceptSuggestion(trip: Trip, suggestionId: string, now: number):
         },
       ],
       holds: [...next.holds, { id: holdId, bookingId, expiresAt: now + HOLD_MINUTES * 60_000, refundable: true, placedUnderPermissionId: decision.permissionId }],
-      events: [...next.events, { id: newId(), timestamp: now, what: fact, permissionId: decision.permissionId, actor: "CampOps" }],
+      events: [...next.events, { id: newId(), timestamp: now, what: fact, permissionId: decision.permissionId, actor: "CampOps", kind: "hold" }],
     };
   } else {
     next = {

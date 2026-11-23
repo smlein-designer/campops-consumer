@@ -36,6 +36,7 @@ export type TripAction =
   | { type: "ADD_HOLD"; hold: Hold }
   | { type: "REMOVE_HOLD"; holdId: string }
   | { type: "SET_PERMISSION"; permissionId: Permission["id"]; enabled: boolean }
+  | { type: "SET_PERMISSION_LIMIT"; permissionId: Permission["id"]; limitUsd: number }
   | { type: "PUSH_NEEDS_YOU"; item: NeedsYouItem }
   | { type: "RESOLVE_NEEDS_YOU"; itemId: string }
   | { type: "SET_SUGGESTION"; suggestion: Suggestion }
@@ -89,6 +90,13 @@ export function tripReducer(trip: Trip, action: TripAction): Trip {
         ...trip,
         permissions: trip.permissions.map((p) =>
           p.id === action.permissionId && !p.locked ? { ...p, enabled: action.enabled } : p,
+        ),
+      };
+    case "SET_PERMISSION_LIMIT":
+      return {
+        ...trip,
+        permissions: trip.permissions.map((p) =>
+          p.id === action.permissionId && !p.locked ? { ...p, limitUsd: action.limitUsd } : p,
         ),
       };
     case "PUSH_NEEDS_YOU":

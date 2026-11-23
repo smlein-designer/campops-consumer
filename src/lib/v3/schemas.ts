@@ -273,6 +273,10 @@ export type PendingPrerequisite = {
 
 export type TripEventActor = "You" | "CampOps";
 
+/** Coarse category for the Activity log's filter chips (All / Your decisions
+ * / Holds / Changes / Searches). */
+export type TripEventKind = "search" | "hold" | "change" | "decision";
+
 export type TripEvent = {
   id: string;
   timestamp: number; // epoch ms, from the shared clock
@@ -280,6 +284,7 @@ export type TripEvent = {
   /** The permission behind this action, or null for a user action. */
   permissionId: PermissionId | null;
   actor: TripEventActor;
+  kind?: TripEventKind;
   details?: { before?: string; after?: string; checked?: string; reason?: string };
 };
 

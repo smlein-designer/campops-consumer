@@ -45,12 +45,16 @@ import { CommitNote } from "@/components/v3/commit-note";
 import { Button } from "@/components/v3/button";
 import { PaymentForm } from "@/components/v3/payment-form";
 import { SuggestionCard } from "@/components/v3/suggestion-card";
+import { FilterChip } from "@/components/v3/filter-chip";
+import { ActivityLogRow } from "@/components/v3/activity-log-row";
+import { PermissionRow } from "@/components/v3/permission-row";
+import { SelectField } from "@/components/v3/select-field";
 import { bookingKindLabel } from "@/lib/v3/booking-display";
 import { commitBooking, removeBooking } from "@/lib/v3/authorize";
 import { formatUsd, tripTotal } from "@/lib/v3/money";
 import { ACTIVITIES_BY_ID, providerForActivity } from "@/lib/v3/providers";
 import { photoSrc } from "@/lib/v3/photos";
-import type { Trip } from "@/lib/v3/schemas";
+import type { Trip, TripEventKind } from "@/lib/v3/schemas";
 
 const BOOKED_OR_HELD = (status: Trip["bookings"][number]["status"]) => status === "held" || status === "changed_needs_ok";
 
@@ -62,8 +66,15 @@ function LiveTripPlan() {
   const { trip, dispatch } = useTrip();
   const { now } = useClock();
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"plan" | "review">("plan");
+  const [view, setView] = useState<"plan" | "review" | "activity" | "permissions">("plan");
+  const [activityFilter, setActivityFilter] = useState<"All" | "Your decisions" | "Holds" | "Changes" | "Searches">("All");
   const [commitError, setCommitError] = useState<string | null>(null);
+
+  function handleNavigate(item: "Trips" | "Activity" | "Permissions") {
+    if (item === "Trips") setView("plan");
+    else if (item === "Activity") setView("activity");
+    else setView("permissions");
+  }
 
   /** Applies a scripted event or resolver's result as one agent-voiced turn (no user message). */
   async function applyEvent(result: ScriptedEventResult, baseTrip: Trip = trip) {
@@ -234,6 +245,7 @@ function LiveTripPlan() {
     return (
       <TripShell
         chargeStatus={`Booked · ${formatUsd(total)} charged`}
+        onNavigate={handleNavigate}
         agent={{ state: "working", title: "Trip booked", detail: "Every item is confirmed" }}
         thread={trip.thread.map((m) => ({ from: m.from, message: m.message }))}
         approveBar={
@@ -253,7 +265,7 @@ function LiveTripPlan() {
     return (
       <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
         <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
-          <TopNav active="Trips" chargeStatus="Nothing charged yet" />
+          <TopNav active="Trips" chargeStatus="Nothing charged yet" onNavigate={handleNavigate} />
         </div>
         <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-10">
           <div className="space-y-2">
@@ -303,9 +315,116 @@ function LiveTripPlan() {
     );
   }
 
+  if (view === "activity") {
+    const permissionLabel = (id: string | null) => trip.permissions.find((p) => p.id === id)?.label ?? "You approved";
+    const matchesFilter = (kind: TripEventKind | undefined, actor: string) => {
+      if (activityFilter === "All") return true;
+      if (activityFilter === "Your decisions") return actor === "You";
+      if (activityFilter === "Holds") return kind === "hold";
+      if (activityFilter === "Changes") return kind === "change";
+      return kind === "search";
+    };
+    const charged = tripTotal(trip.bookings.filter((b) => b.status === "approved"));
+    const heldTotal = tripTotal(trip.bookings.filter((b) => b.status === "held" || b.status === "changed_needs_ok"));
+    return (
+      <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
+        <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <TopNav active="Activity" chargeStatus="Nothing charged yet" onNavigate={handleNavigate} />
+        </div>
+        <div className="mx-auto max-w-3xl space-y-6 p-6 md:p-10">
+          <h1 className="text-heading-l text-[var(--color-text-primary)]">Activity</h1>
+          <div className="flex flex-wrap gap-2">
+            {(["All", "Your decisions", "Holds", "Changes", "Searches"] as const).map((label) => (
+              <FilterChip key={label} label={label} selected={activityFilter === label} onClick={() => setActivityFilter(label)} />
+            ))}
+          </div>
+          <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4">
+            {trip.events.filter((e) => matchesFilter(e.kind, e.actor)).map((event) => (
+              <ActivityLogRow
+                key={event.id}
+                time={new Date(event.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                what={event.what}
+                rule={event.permissionId ? permissionLabel(event.permissionId) : "You approved"}
+                actor={event.actor}
+                details={event.details}
+              />
+            ))}
+            {trip.events.length === 0 && (
+              <p className="py-4 text-body-s text-[var(--color-text-secondary)]">Nothing recorded yet.</p>
+            )}
+          </div>
+          <div className="space-y-2 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-4">
+            <SummaryRow label="Charged" value={formatUsd(charged)} />
+            <SummaryRow label="Held, free to cancel" value={formatUsd(heldTotal)} />
+            {needsYou && <SummaryRow label="Waiting on you" value={needsYou.eyebrow} />}
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-heading-m text-[var(--color-text-primary)]">What this trip touched</h2>
+            <ul className="space-y-1 text-body-s text-[var(--color-text-secondary)]">
+              {trip.bookings.map((b) => (
+                <li key={b.id}>
+                  {b.title} — {b.status === "approved" ? "Approved" : b.status === "held" ? "Held" : b.status}
+                </li>
+              ))}
+              {trip.bookings.length === 0 && <li>Nothing yet.</li>}
+            </ul>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" label="Review permissions" onClick={() => setView("permissions")} />
+            <Button variant="ghost" label="Back to trip" onClick={() => setView("plan")} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "permissions") {
+    return (
+      <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
+        <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <TopNav active="Permissions" chargeStatus="Nothing charged yet" onNavigate={handleNavigate} />
+        </div>
+        <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-10">
+          <h1 className="text-heading-l text-[var(--color-text-primary)]">Permissions</h1>
+          <p className="text-body-m text-[var(--color-text-secondary)]">
+            What CampOps may do on its own. Changes apply to its next action.
+          </p>
+          <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4">
+            {trip.permissions.map((permission) => (
+              <PermissionRow
+                key={permission.id}
+                title={permission.label}
+                description={permission.description}
+                control={permission.locked ? "locked" : permission.enabled ? "on" : "off"}
+                onChange={(next) => dispatch({ type: "SET_PERMISSION", permissionId: permission.id, enabled: next })}
+                limits={
+                  permission.limitUsd != null ? (
+                    <SelectField
+                      value={String(permission.limitUsd)}
+                      options={[
+                        { label: "$200 limit · this trip", value: "200" },
+                        { label: "$300 limit · this trip", value: "300" },
+                        { label: "$400 limit · this trip", value: "400" },
+                      ]}
+                      onChange={(value) =>
+                        dispatch({ type: "SET_PERMISSION_LIMIT", permissionId: permission.id, limitUsd: Number(value) })
+                      }
+                    />
+                  ) : undefined
+                }
+              />
+            ))}
+          </div>
+          <Button variant="ghost" label="Back to trip" onClick={() => setView("plan")} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <TripShell
       chargeStatus="Nothing charged yet"
+      onNavigate={handleNavigate}
       agent={{
         state: trip.agent.working ? "working" : trip.agent.phase === "complete" ? "working" : "waiting",
         title: trip.agent.phase === "complete" ? "Everything is held" : trip.agent.working ? "Working" : "Waiting on you",
@@ -361,7 +480,7 @@ function LiveTripPlan() {
         </div>
       )}
       {trip.bookings.length > 0 ? (
-        <Itinerary bookings={trip.bookings} />
+        <Itinerary bookings={trip.bookings} onRelease={handleRemove} />
       ) : trip.intent.requirements.length === 0 ? (
         <p className="text-body-m text-[var(--color-text-secondary)]">
           Tell CampOps about your trip below — dates, dealbreakers, tradeoffs you&apos;re willing to make.

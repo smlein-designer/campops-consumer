@@ -7,11 +7,15 @@ export function TopNav({
   active,
   chargeStatus,
   showChargeStatus = true,
+  onNavigate,
 }: {
   theme?: "default" | "onPhoto";
   active: "Trips" | "Activity" | "Permissions";
   chargeStatus: string;
   showChargeStatus?: boolean;
+  /** Real in-app navigation (the live page only) — omitted elsewhere, where
+   * these items stay plain text (Figma-comparison static screens). */
+  onNavigate?: (item: "Trips" | "Activity" | "Permissions") => void;
 }) {
   const items = ["Trips", "Activity", "Permissions"] as const;
   const isOnPhoto = theme === "onPhoto";
@@ -30,23 +34,30 @@ export function TopNav({
           campops
         </span>
         <div className="flex gap-7">
-          {items.map((item) => (
-            <span
-              key={item}
-              className="text-label-m"
-              style={{
-                color: isOnPhoto
-                  ? item === active
-                    ? "white"
-                    : "#edebe0"
-                  : item === active
-                    ? "var(--color-text-primary)"
-                    : "var(--color-text-secondary)",
-              }}
-            >
-              {item}
-            </span>
-          ))}
+          {items.map((item) => {
+            const color = isOnPhoto
+              ? item === active
+                ? "white"
+                : "#edebe0"
+              : item === active
+                ? "var(--color-text-primary)"
+                : "var(--color-text-secondary)";
+            return onNavigate ? (
+              <button
+                key={item}
+                type="button"
+                onClick={() => onNavigate(item)}
+                className="text-label-m cursor-pointer"
+                style={{ color }}
+              >
+                {item}
+              </button>
+            ) : (
+              <span key={item} className="text-label-m" style={{ color }}>
+                {item}
+              </span>
+            );
+          })}
         </div>
       </div>
       <div className="flex items-center gap-4">
