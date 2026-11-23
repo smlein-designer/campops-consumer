@@ -20,7 +20,7 @@ import {
   RateLimitError,
 } from "@/lib/v3/agent-loop";
 import { tryAnswerCandidateQuestion } from "@/lib/v3/candidate-qa";
-import { isAlternativeRequestMessage } from "@/lib/v3/clarification";
+import { isAlternativeRequestMessage, isNamedCampsiteSwitchMessage, matchNamedCampsite } from "@/lib/v3/clarification";
 import { buildCandidateFit, campsiteCharacteristicTags } from "@/lib/v3/fit";
 import { evaluateCampsites } from "@/lib/evaluate";
 import { toV2SearchIntent } from "@/lib/v3/search-adapter";
@@ -28,6 +28,8 @@ import {
   fireCampsiteUnavailable,
   fireForecastChange,
   fireHoldExpiry,
+  choosePontoonSlot,
+  PONTOON_SLOT_TRADEOFFS,
   resolveCampsiteUnavailableHold,
   resolveForecastDecision,
   resolveHoldExpiryRehold,
@@ -72,7 +74,7 @@ function LiveTripPlan() {
   const { trip, dispatch } = useTrip();
   const { now } = useClock();
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"plan" | "review" | "activity" | "permissions" | "campsite-options">("plan");
+  const [view, setView] = useState<"plan" | "review" | "activity" | "permissions" | "campsite-options" | "pontoon-times">("plan");
   const [activityFilter, setActivityFilter] = useState<"All" | "Your decisions" | "Holds" | "Changes" | "Searches">("All");
   const [commitError, setCommitError] = useState<string | null>(null);
 
@@ -118,6 +120,29 @@ function LiveTripPlan() {
         },
       });
       return;
+    }
+
+    // An explicit, NAMED campsite switch ("Let's switch to Prairie Flats")
+    // — distinct from "show me another option" below: the user already
+    // knows which site they want, so this resolves the name directly
+    // rather than cycling the ranked list. Checked first since it's the
+    // more specific match.
+    if (isNamedCampsiteSwitchMessage(message)) {
+      const result = evaluateCampsites(toV2SearchIntent(trip.intent));
+      const target = result.kind !== "no_match" ? matchNamedCampsite(message, result.candidates.map((c) => c.campsite)) : null;
+      if (target) {
+        setBusy(true);
+        try {
+          const withUserLine = { ...trip, thread: [...trip.thread, { id: newId(), from: "user" as const, message }] };
+          const switched = holdSpecificCampsite(trip, target.id, now);
+          await applyEvent(switched, withUserLine);
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      // Named site not found among current candidates — fall through to
+      // the model, which can still ask a clarifying question about it.
     }
 
     // "Show me another option" (ported from v2's candidate cycling, adapted
@@ -181,8 +206,8 @@ function LiveTripPlan() {
 
   function resolveNeedsYou(choice: "primary" | "secondary") {
     if (!needsYou) return;
-    if (needsYou.kind === "forecast_move") {
-      void applyEvent(resolveForecastDecision(trip, needsYou.id, choice === "primary", now));
+    if (needsYou.kind === "forecast_move" && choice === "primary") {
+      void applyEvent(resolveForecastDecision(trip, needsYou.id, true, now));
     } else if (needsYou.kind === "hold_expired" && choice === "primary") {
       void applyEvent(resolveHoldExpiryRehold(trip, needsYou.id, needsYou.payload?.bookingId ?? "", now));
     } else if (needsYou.kind === "campsite_unavailable" && choice === "primary") {
@@ -191,7 +216,15 @@ function LiveTripPlan() {
       void applyEvent(widenTripSearch(trip, now));
     } else if ((needsYou.kind === "campsite_unavailable" || needsYou.kind === "no_match") && choice === "secondary") {
       setView("campsite-options");
+    } else if (needsYou.kind === "forecast_move" && choice === "secondary") {
+      setView("pontoon-times");
     }
+  }
+
+  function handleChoosePontoonSlot(slotIndex: number) {
+    if (!needsYou) return;
+    void applyEvent(choosePontoonSlot(trip, needsYou.id, slotIndex, now));
+    setView("plan");
   }
 
   function handleHoldSpecificCampsite(campsiteId: string) {
@@ -400,6 +433,47 @@ function LiveTripPlan() {
     );
   }
 
+  if (view === "pontoon-times") {
+    // Pontoon · Other Times (Figma node 36:1610) — every open slot, with
+    // its own tradeoff against the storm, not just the keep/revert
+    // shortcut resolveForecastDecision's primary button already covers.
+    const pontoon = ACTIVITIES_BY_ID["lakeshore-pontoon"];
+    return (
+      <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
+        <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <TopNav active="Trips" chargeStatus="Nothing charged yet" onNavigate={handleNavigate} />
+        </div>
+        <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-10">
+          <h1 className="text-heading-l text-[var(--color-text-primary)]">Pontoon · other times</h1>
+          <p className="text-body-s text-[var(--color-text-secondary)]">
+            Open times at Lakeshore Marina that miss the storm. Same boat, ${pontoon.price}, full refund up to 24 hours before.
+          </p>
+          <div className="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4">
+            {pontoon.slots.map((slot, i) => {
+              const tradeoff = PONTOON_SLOT_TRADEOFFS[i];
+              return (
+                <div key={`${slot.date}-${slot.startTime}`} className="flex items-center justify-between gap-4 border-b border-[var(--color-border-default)] py-4 last:border-b-0">
+                  <div>
+                    <p className="text-label-l text-[var(--color-text-primary)]">
+                      {slot.date} · {slot.startTime} to {slot.endTime}
+                    </p>
+                    <p className="text-body-s text-[var(--color-text-secondary)]">{tradeoff?.detail ?? ""}</p>
+                  </div>
+                  <Button
+                    variant={i === 0 ? "secondary" : "primary"}
+                    label={tradeoff?.keepLabel ?? "Choose"}
+                    onClick={() => handleChoosePontoonSlot(i)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <Button variant="ghost" label="Back to trip" onClick={() => setView("plan")} />
+        </div>
+      </div>
+    );
+  }
+
   if (view === "activity") {
     const permissionLabel = (id: string | null) => trip.permissions.find((p) => p.id === id)?.label ?? "You approved";
     const matchesFilter = (kind: TripEventKind | undefined, actor: string) => {
@@ -511,9 +585,21 @@ function LiveTripPlan() {
       chargeStatus="Nothing charged yet"
       onNavigate={handleNavigate}
       agent={{
-        state: trip.agent.working ? "working" : trip.agent.phase === "complete" ? "working" : "waiting",
-        title: trip.agent.phase === "complete" ? "Everything is held" : trip.agent.working ? "Working" : "Waiting on you",
-        detail: trip.agent.currentStepText || "Tell CampOps about your trip",
+        state: trip.agent.paused ? "paused" : trip.agent.working || trip.agent.phase === "complete" ? "working" : "waiting",
+        title: trip.agent.paused
+          ? "Paused"
+          : trip.agent.phase === "complete"
+            ? "Everything is held"
+            : trip.agent.working
+              ? "CampOps is working"
+              : "Waiting on you",
+        detail: trip.agent.paused
+          ? "No new actions until you resume"
+          : trip.plan.length > 0
+            ? `${trip.plan.filter((s) => s.status === "done").length} of ${trip.plan.length} arranged${trip.agent.currentStepText ? ` · ${trip.agent.currentStepText}` : ""}`
+            : trip.agent.currentStepText || "Tell CampOps about your trip",
+        onPause: () => dispatch({ type: "SET_AGENT", agent: { paused: true } }),
+        onResume: () => dispatch({ type: "SET_AGENT", agent: { paused: false } }),
       }}
       needsYou={
         needsYou
@@ -537,7 +623,7 @@ function LiveTripPlan() {
       }
       approveBar={held ? <ApproveBar amount={`${formatUsd(tripTotal(trip.bookings))} total`} summary="Nothing charged yet" onReview={() => setView("review")} /> : undefined}
       onReview={() => setView("review")}
-      onComposerSubmit={busy ? undefined : handleSubmit}
+      onComposerSubmit={busy || trip.agent.paused ? undefined : handleSubmit}
     >
       {trip.campsiteComparison && (
         <div className="space-y-3">

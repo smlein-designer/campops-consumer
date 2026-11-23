@@ -54,6 +54,8 @@ export const ACTIVITIES: Activity[] = [
     slots: [
       { date: "2027-04-17", startTime: "14:00", endTime: "18:00", capacityRemaining: 1 },
       { date: "2027-04-18", startTime: "09:00", endTime: "13:00", capacityRemaining: 1 },
+      { date: "2027-04-16", startTime: "16:00", endTime: "20:00", capacityRemaining: 1 },
+      { date: "2027-04-18", startTime: "13:00", endTime: "17:00", capacityRemaining: 1 },
     ],
   },
   {

@@ -98,9 +98,9 @@ export function fireForecastChange(trip: Trip, now: number): ScriptedEventResult
 
 /**
  * Resolves the forecast Needs You item. `keepProposed` true = "Keep Sunday"
- * (finalize the move); false = "Other options" (keep the original Saturday
- * slot — a fuller slot-picker is the Pontoon · Other Times screen, out of
- * scope for this resolver).
+ * (finalize the proposed move); false is no longer used by the live page —
+ * "Other options" opens the full Pontoon · Other Times picker instead (see
+ * choosePontoonSlot), which was previously out of scope for this resolver.
  */
 export function resolveForecastDecision(trip: Trip, itemId: string, keepProposed: boolean, now: number): ScriptedEventResult {
   const item = trip.needsYouQueue.find((n) => n.id === itemId);
@@ -121,6 +121,52 @@ export function resolveForecastDecision(trip: Trip, itemId: string, keepProposed
     changeNote,
   };
   const fact = keepProposed ? "You kept Sunday." : "You kept Saturday, storm risk and all.";
+
+  return {
+    trip: {
+      ...trip,
+      bookings: trip.bookings.map((b) => (b.id === pontoonBooking.id ? updatedBooking : b)),
+      needsYouQueue: trip.needsYouQueue.filter((n) => n.id !== itemId),
+      events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: null, actor: "You", kind: "decision" }],
+      agent: { ...trip.agent, working: false, phase: "complete", currentStepText: "Everything is held · ready to book" },
+    },
+    factsToPhrase: [fact],
+  };
+}
+
+/** Every open pontoon time, with its own tradeoff against the storm —
+ * Figma node 36:1610 "Pontoon · Other Times". Index matches
+ * ACTIVITIES_BY_ID[lakeshore-pontoon].slots. */
+export const PONTOON_SLOT_TRADEOFFS = [
+  { detail: "Original time · storms 70% likely", keepLabel: "Keep anyway" },
+  { detail: "Current pick · morning on the water", keepLabel: "Keep" },
+  { detail: "Arrival evening · sunset cruise", keepLabel: "Choose" },
+  { detail: "After checkout · drive home later", keepLabel: "Choose" },
+];
+
+/**
+ * Finalizes the pontoon at any of its open slots — the full "Other Times"
+ * picker the forecast-change Needs You item's secondary button opens,
+ * rather than resolveForecastDecision's two-slot keep/revert shortcut.
+ */
+export function choosePontoonSlot(trip: Trip, itemId: string, slotIndex: number, now: number): ScriptedEventResult {
+  const item = trip.needsYouQueue.find((n) => n.id === itemId);
+  if (!item) return { trip, factsToPhrase: [] };
+  const pontoonBooking = trip.bookings.find((b) => b.refId === PONTOON_ACTIVITY_ID && b.status === "changed_needs_ok");
+  if (!pontoonBooking) return { trip, factsToPhrase: [] };
+
+  const pontoon = ACTIVITIES_BY_ID[PONTOON_ACTIVITY_ID];
+  const slot = pontoon.slots[slotIndex];
+  if (!slot) return { trip, factsToPhrase: [] };
+  const changeNote = slotIndex === 0 ? "Weather risk acknowledged. You kept the original time." : "Moved from Saturday for weather. You picked a new time.";
+  const updatedBooking: Booking = {
+    ...pontoonBooking,
+    status: "held",
+    day: slot.date,
+    time: `${slot.startTime}-${slot.endTime}`,
+    changeNote,
+  };
+  const fact = `You picked ${slot.date} ${slot.startTime}-${slot.endTime} for the pontoon.`;
 
   return {
     trip: {

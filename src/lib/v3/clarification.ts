@@ -114,3 +114,26 @@ const ALTERNATIVE_REQUEST_PATTERN =
 export function isAlternativeRequestMessage(message: string): boolean {
   return ALTERNATIVE_REQUEST_PATTERN.test(message);
 }
+
+/**
+ * Deterministic detector for an explicit, NAMED campsite switch ("Let's
+ * switch to Prairie Flats", "Change to Cedar Point instead") — distinct
+ * from isAlternativeRequestMessage, which only ever means "show me the
+ * next ranked option," never a specific site the user already has in
+ * mind. Checked before the message reaches the model, same priority as
+ * the other deterministic detectors. Returns the matched campsite's id,
+ * or null if the message isn't this kind of request or names no real
+ * site. Among same-named campgrounds (several sites can share one), the
+ * caller's own candidate list decides which one wins.
+ */
+const NAMED_SWITCH_PATTERN =
+  /\b(switch (?:to|campsites? to)|let'?s (?:switch|go|do|try)|change (?:to|campsites? to)|i'?d rather (?:have|stay at|go with))\b/i;
+
+export function isNamedCampsiteSwitchMessage(message: string): boolean {
+  return NAMED_SWITCH_PATTERN.test(message);
+}
+
+export function matchNamedCampsite<T extends { campgroundName: string }>(message: string, candidates: T[]): T | null {
+  const lower = message.toLowerCase();
+  return candidates.find((c) => lower.includes(c.campgroundName.toLowerCase())) ?? null;
+}

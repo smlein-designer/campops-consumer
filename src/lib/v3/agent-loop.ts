@@ -440,7 +440,13 @@ export function applyTurn(
   // in code, before any merge, the same deterministic guard v2 applies
   // (src/app/page.tsx's own "unsupported" branch).
   if (extraction.status === "unsupported") {
-    const fact = extraction.unsupportedReason ?? "CampOps can't help with that part of the request.";
+    const reason = extraction.unsupportedReason ?? "CampOps can't help with that part of the request.";
+    // A pending decision is never silently dropped by an unsupported
+    // aside — named explicitly, deterministically (not left to the model
+    // to remember), matching Figma's "and the pontoon question above
+    // still needs you" (node 31:1523).
+    const pending = trip.needsYouQueue[0];
+    const fact = pending ? `${reason} Nothing in your trip changed, and the ${pending.eyebrow.toLowerCase()} decision above still needs you.` : reason;
     const unsupported: Trip = { ...trip, agent: { ...trip.agent, working: false, phase: "awaiting_user" } };
     return { trip: unsupported, factsToPhrase: [fact], checkpoints: [{ trip: unsupported, facts: [fact] }] };
   }

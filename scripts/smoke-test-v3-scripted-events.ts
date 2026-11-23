@@ -5,6 +5,7 @@
 import { applyTurn } from "../src/lib/v3/agent-loop";
 import { emptyTrip } from "../src/lib/v3/trip-factory";
 import {
+  choosePontoonSlot,
   fireCampsiteUnavailable,
   fireForecastChange,
   fireHoldExpiry,
@@ -80,6 +81,22 @@ run("Forecast change: proposes Sunday, keeps the hold, posts one Needs You item"
     resolved.trip.agent.currentStepText === "Everything is held · ready to book",
     "the trip returns to the ready-to-book state",
   );
+});
+
+run("Pontoon · Other Times: picking any open slot finalizes it, not just keep/revert", () => {
+  const trip = goldenPathTrip();
+  const { trip: afterFire } = fireForecastChange(trip, now);
+  const itemId = afterFire.needsYouQueue[0].id;
+
+  // Slot index 3 is neither the original (0) nor the proposed (1) slot —
+  // exactly the case resolveForecastDecision's two-option shortcut can't
+  // reach, matching Figma's 4-option "Other Times" picker (node 36:1610).
+  const { trip: picked, factsToPhrase } = choosePontoonSlot(afterFire, itemId, 3, now);
+  const pontoon = picked.bookings.find((b) => b.refId === "lakeshore-pontoon")!;
+  assert(pontoon.status === "held", `the chosen slot is held, got "${pontoon.status}"`);
+  assert(pontoon.day === "2027-04-18" && pontoon.time === "13:00-17:00", `the booking reflects the chosen slot, got ${pontoon.day} ${pontoon.time}`);
+  assert(picked.needsYouQueue.length === 0, "the Needs You item is resolved");
+  assert(factsToPhrase.length > 0, "an acknowledgment is produced");
 });
 
 run("Hold expiry: re-holds without asking when within permission, asks when not", () => {
