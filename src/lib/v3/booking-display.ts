@@ -1,5 +1,5 @@
 import type { BookingCardState } from "@/components/v3/booking-card";
-import type { Booking } from "@/lib/v3/schemas";
+import type { Booking, V3TripIntent } from "@/lib/v3/schemas";
 
 const KIND_LABEL: Record<Booking["kind"], string> = {
   campsite: "Campsite",
@@ -27,6 +27,35 @@ export function bookingKindAndTime(booking: Booking): string {
 
 export function bookingMeta(booking: Booking): string {
   return `$${booking.price}`;
+}
+
+/**
+ * The "What I heard" chip set's structural (non-free-text) facts — dates,
+ * party size, drive limit, budget — ported from v2's Trip Requirement
+ * Projection (src/lib/requirements.ts's getDerivedRequirements): these are
+ * real must-have facts the trip already carries as scalar TripIntent
+ * fields, not literal `requirements[]` entries, so they were previously
+ * invisible as chips in the live app even though Figma (and the model's own
+ * extracted requirements) treat them as first-class must-haves. Always
+ * shown as plain (non-removable) chips, same as v2's own rule for a
+ * structurally-derived chip — there's no literal entry to clear; changing
+ * one of these is a real trip edit, made through the composer.
+ */
+export function tripFactChips(intent: V3TripIntent): string[] {
+  const chips: string[] = [];
+  if (intent.checkIn && intent.checkOut) chips.push(`${intent.checkIn} to ${intent.checkOut}`);
+  if (intent.adults > 0) {
+    chips.push(
+      intent.pets > 0
+        ? `${intent.adults} adult${intent.adults === 1 ? "" : "s"} and ${intent.pets} pet${intent.pets === 1 ? "" : "s"}`
+        : `${intent.adults} adult${intent.adults === 1 ? "" : "s"}`,
+    );
+  } else if (intent.pets > 0) {
+    chips.push(`${intent.pets} pet${intent.pets === 1 ? "" : "s"}`);
+  }
+  if (intent.driveLimitHours != null) chips.push(`Under ${intent.driveLimitHours} hrs from ${intent.originZip || "you"}`);
+  if (intent.budgetUsd != null) chips.push(`Budget $${intent.budgetUsd}`);
+  return chips;
 }
 
 /** Groups bookings by their display day, in first-seen order. */

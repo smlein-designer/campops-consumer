@@ -66,3 +66,15 @@ export function buildCandidateFit(
 
   return rows;
 }
+
+/**
+ * Characteristics relevant to the user's request (PRD v3 §6, explicit
+ * booking-authorization requirement) — the must-have requirement labels
+ * this campsite actually satisfies, for the Review screen's line item.
+ * Reuses the same `preserved` data buildCandidateFit does.
+ */
+export function campsiteCharacteristicTags(result: EvaluationResult, campsiteId: string, intent: V3TripIntent): string[] {
+  const candidate = result.candidates.find((c) => c.campsite.id === campsiteId);
+  if (!candidate) return [];
+  return intent.requirements.filter((r) => r.tier === "must" && candidate.preserved.includes(r.label)).map((r) => r.label);
+}

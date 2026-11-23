@@ -20,6 +20,9 @@ import {
 } from "@/lib/v3/agent-loop";
 import { tryAnswerCandidateQuestion } from "@/lib/v3/candidate-qa";
 import { isAlternativeRequestMessage } from "@/lib/v3/clarification";
+import { campsiteCharacteristicTags } from "@/lib/v3/fit";
+import { evaluateCampsites } from "@/lib/evaluate";
+import { toV2SearchIntent } from "@/lib/v3/search-adapter";
 import {
   fireCampsiteUnavailable,
   fireForecastChange,
@@ -50,7 +53,7 @@ import { FilterChip } from "@/components/v3/filter-chip";
 import { ActivityLogRow } from "@/components/v3/activity-log-row";
 import { PermissionRow } from "@/components/v3/permission-row";
 import { SelectField } from "@/components/v3/select-field";
-import { bookingKindLabel } from "@/lib/v3/booking-display";
+import { bookingKindLabel, tripFactChips } from "@/lib/v3/booking-display";
 import { commitBooking, removeBooking } from "@/lib/v3/authorize";
 import { formatUsd, tripTotal } from "@/lib/v3/money";
 import { ACTIVITIES_BY_ID, providerForActivity } from "@/lib/v3/providers";
@@ -224,6 +227,7 @@ function LiveTripPlan() {
     });
   }
 
+  const factChips = tripFactChips(trip.intent);
   const bookedCount = trip.bookings.filter((b) => BOOKED_OR_HELD(b.status)).length;
   const total = tripTotal(trip.bookings.filter((b) => BOOKED_OR_HELD(b.status)));
   const offeredSuggestion = trip.suggestions.find((s) => s.state === "offered");
@@ -282,6 +286,7 @@ function LiveTripPlan() {
                 title={`${bookingKindLabel(booking.kind)} · ${booking.title}`}
                 when={`${booking.day}${booking.time ? ` · ${booking.time}` : ""}`}
                 terms={booking.refundTerms}
+                tags={booking.kind === "campsite" ? campsiteCharacteristicTags(evaluateCampsites(toV2SearchIntent(trip.intent)), booking.refId, trip.intent) : undefined}
                 flag={booking.changeNote}
                 amount={`$${booking.price}`}
                 onRemove={() => handleRemove(booking.id)}
@@ -295,10 +300,32 @@ function LiveTripPlan() {
           <SummaryRow label="Total" value={formatUsd(total)} />
 
           {trip.authorization.paymentMethodLabel ? (
-            <SummaryRow label="Payment method" value={trip.authorization.paymentMethodLabel} />
+            <div className="flex items-center justify-between">
+              <SummaryRow label="Payment method" value={trip.authorization.paymentMethodLabel} />
+              <button
+                type="button"
+                onClick={() => dispatch({ type: "SET_AUTHORIZATION", authorization: { paymentMethodLabel: null } })}
+                className="text-label-s text-[var(--color-text-link)] hover:underline"
+              >
+                Change
+              </button>
+            </div>
           ) : (
             <PaymentForm onSave={handleSavePayment} />
           )}
+
+          {/* What happens on approval (PRD v3 §12 Transparency: the user
+              must be able to distinguish what's held from the consequential
+              action that hasn't happened yet). */}
+          <div className="space-y-1 rounded-xl bg-[var(--color-bg-canvas)] px-4 py-3 text-body-s text-[var(--color-text-secondary)]">
+            <p className="text-label-m text-[var(--color-text-primary)]">When you book</p>
+            <p>· CampOps confirms {bookedCount === 1 ? "the" : `all ${bookedCount}`} booking{bookedCount === 1 ? "" : "s"} with each provider.</p>
+            <p>
+              · Your {trip.authorization.paymentMethodLabel || "payment method"} is charged {formatUsd(total)}
+              {bookedCount === 1 ? "." : `, as ${bookedCount} separate charges.`}
+            </p>
+            <p>· Confirmations arrive by email. Each item keeps the refund terms above.</p>
+          </div>
 
           {commitError && <p className="text-body-s text-[var(--color-status-attention)]">{commitError}</p>}
 
@@ -483,10 +510,13 @@ function LiveTripPlan() {
           </div>
         </div>
       )}
-      {trip.intent.requirements.length > 0 && (
+      {(factChips.length > 0 || trip.intent.requirements.length > 0) && (
         <div className="space-y-3">
           <h2 className="text-heading-m text-[var(--color-text-primary)]">What I heard</h2>
           <div className="flex flex-wrap gap-2">
+            {factChips.map((label) => (
+              <RequirementChip key={label} type="mustHave" label={label} />
+            ))}
             {trip.intent.requirements.map((r) => (
               <RequirementChip
                 key={r.id}
