@@ -8,9 +8,11 @@
  * presentational component (CampsiteOption/FitRow) used by static Figma
  * fixtures — never computed or shown by the live agent loop.
  */
-import { applyTurn } from "../src/lib/v3/agent-loop";
+import { applyTurn, holdSpecificCampsite } from "../src/lib/v3/agent-loop";
 import { fireCampsiteUnavailable, resolveCampsiteUnavailableHold } from "../src/lib/v3/scripted-events";
 import { emptyTrip } from "../src/lib/v3/trip-factory";
+import { evaluateCampsites } from "../src/lib/evaluate";
+import { toV2SearchIntent } from "../src/lib/v3/search-adapter";
 import type { V3IntentExtraction } from "../src/lib/v3/intent-schema";
 
 let failures = 0;
@@ -100,6 +102,80 @@ run("Campsite unavailable: the lost site and the replacement are compared with f
   const recommendedId = item.payload?.campsiteId ?? "";
   const { trip: resolved } = resolveCampsiteUnavailableHold(lostTrip, item.id, recommendedId, now);
   assert(resolved.campsiteComparison === null, "the comparison clears once the replacement is held");
+});
+
+run("Other Campsite Options: holding a specific site releases the old one and picks the new one", () => {
+  const { trip: held } = applyTurn(
+    emptyTrip(),
+    {
+      checkIn: "Apr 16",
+      checkOut: "Apr 18",
+      adults: 4,
+      pets: 1,
+      originZip: null,
+      driveLimitHours: null,
+      budgetUsd: null,
+      requirements: [{ label: "Waterfront", tier: "must" }, { label: "Dog allowed", tier: "must" }],
+      status: "actionable",
+      clarificationQuestion: null,
+      unsupportedReason: null,
+      clarificationOptions: null,
+    },
+    now,
+    "A waterfront, dog-friendly site for 4, Apr 16 to 18",
+  );
+  const firstPick = held.bookings.find((b) => b.kind === "campsite")!;
+
+  const result = evaluateCampsites(toV2SearchIntent(held.intent));
+  const differentCandidate = result.candidates.find((c) => c.campsite.id !== firstPick.refId);
+  assert(!!differentCandidate, "a different candidate exists to switch to");
+  const targetId = differentCandidate!.campsite.id;
+
+  const { trip: switched, factsToPhrase } = holdSpecificCampsite(held, targetId, now);
+  const newPick = switched.bookings.find((b) => b.kind === "campsite");
+  assert(!!newPick && newPick.refId === targetId, "the newly chosen site is now held");
+  assert(!switched.bookings.some((b) => b.refId === firstPick.refId), "the old site is released, not left dangling");
+  assert(factsToPhrase.length > 0, "an acknowledgment is produced");
+});
+
+run("Other Campsite Options: explicitly picking a no-match candidate actually holds it", () => {
+  // Regression: continueTrip's own search step only ever picks a candidate
+  // when the OVERALL result is "full"/"compromise" — a genuine no_match
+  // result (nothing satisfies every must-have) must still let the user
+  // override by picking a specific option directly, which is a different,
+  // user-authored decision from the agent silently relaxing a requirement.
+  const { trip: noMatch } = applyTurn(
+    emptyTrip(),
+    {
+      checkIn: "Apr 16",
+      checkOut: "Apr 18",
+      adults: 4,
+      pets: null,
+      originZip: null,
+      driveLimitHours: null,
+      budgetUsd: null,
+      requirements: [
+        { label: "Tent site", tier: "must" },
+        { label: "Cabin", tier: "must" },
+      ],
+      status: "actionable",
+      clarificationQuestion: null,
+      unsupportedReason: null,
+      clarificationOptions: null,
+    },
+    now,
+    "a tent site that's also a cabin, for 4",
+  );
+  assert(noMatch.bookings.length === 0, "nothing is held yet — the combination is unsatisfiable");
+
+  const result = evaluateCampsites(toV2SearchIntent(noMatch.intent));
+  assert(result.kind === "no_match", "the search is a genuine no-match");
+  const pick = result.candidates[0].campsite.id;
+
+  const { trip: picked, factsToPhrase } = holdSpecificCampsite(noMatch, pick, now);
+  const booking = picked.bookings.find((b) => b.kind === "campsite");
+  assert(!!booking && booking.refId === pick, "explicitly picking a no-match candidate actually holds it");
+  assert(factsToPhrase.some((f) => f.includes("Held")), `an acknowledgment is produced, got ${JSON.stringify(factsToPhrase)}`);
 });
 
 if (failures > 0) {

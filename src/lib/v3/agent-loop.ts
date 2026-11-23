@@ -240,6 +240,7 @@ export function continueTrip(
           eyebrow: "No campsite fits every must-have",
           message: "Want me to widen the search, or adjust a requirement?",
           primaryLabel: "Widen search",
+          secondaryLabel: "Other options",
           kind: "no_match",
         }],
         // Compromise visibility (PRD v3 §5.4 "must name any must-have that
@@ -638,6 +639,81 @@ export function requestAlternativeCampsite(trip: Trip, now: number): { trip: Tri
   const released = releaseBookingAndDependents(trip, held.id, now);
   const next: Trip = { ...released, candidateIndex: nextIndex };
   return continueTrip(next, now, [`Sure — looking at another option: ${alternative.campsite.siteName} at ${alternative.campsite.campgroundName}.`]);
+}
+
+/**
+ * Holds a SPECIFIC campsite by id, releasing whatever campsite is currently
+ * held (and its dependent activities) first if there is one. The shared
+ * mechanics behind the "Other Campsite Options" screen (PRD v3 §5.3
+ * "request alternatives") — the user browses several ranked options at
+ * once and picks one directly, rather than cycling one at a time.
+ */
+export function holdSpecificCampsite(trip: Trip, campsiteId: string, now: number): { trip: Trip; factsToPhrase: string[]; checkpoints: TurnCheckpoint[] } {
+  const result = evaluateCampsites(toV2SearchIntent(trip.intent));
+  const index = result.candidates.findIndex((c) => c.campsite.id === campsiteId);
+  if (index === -1) return { trip, factsToPhrase: [], checkpoints: [] };
+  const campsite = result.candidates[index].campsite;
+
+  const currentlyHeld = trip.bookings.find((b) => b.kind === "campsite" && b.status === "held");
+  const released = currentlyHeld ? releaseBookingAndDependents(trip, currentlyHeld.id, now) : trip;
+  const base: Trip = {
+    ...released,
+    candidateIndex: index,
+    needsYouQueue: released.needsYouQueue.filter((n) => n.kind !== "no_match" && n.kind !== "campsite_unavailable"),
+    campsiteComparison: null,
+  };
+
+  // Built directly rather than through continueTrip's own search step: that
+  // step only ever picks a candidate when the OVERALL search is "full" or
+  // "compromise" (a no_match result's candidates are shown for
+  // transparency only, never auto-recommended) — but here the user has
+  // already SEEN the compromise (this screen's fit breakdown) and chosen
+  // this site explicitly, which is a different, user-authored decision,
+  // not the agent silently relaxing a requirement.
+  const dateRange = computeDateRange(base.intent.checkIn || "Apr 16", base.intent.checkOut || "Apr 18");
+  const nights = dateRange?.nights ?? DEFAULT_NIGHTS;
+  const price = Math.round((campsite.pricePerNight * nights + campsite.serviceFee) * 100) / 100;
+  const decision = checkPermission(base.permissions, { type: "hold", refundable: true, amountUsd: price });
+  const bookingTitle = `${campsite.campgroundName} · ${campsite.siteName}`;
+
+  if (decision.result !== "allow") {
+    const next: Trip = {
+      ...base,
+      needsYouQueue: [...base.needsYouQueue, {
+        id: newId(),
+        eyebrow: "Asking before holding",
+        message: `Hold ${campsite.campgroundName}, ${campsite.siteName} for $${price}?`,
+        primaryLabel: `Hold · $${price}`,
+      }],
+      plan: setStep(base.plan, "step-campsite", { status: "pending", detail: "" }),
+      agent: { ...base.agent, working: false, phase: "awaiting_user", currentStepText: "One item needs a decision" },
+    };
+    const fact = `Found ${bookingTitle} for $${price} — asking before holding it.`;
+    return { trip: next, factsToPhrase: [fact], checkpoints: [{ trip: next, facts: [fact] }] };
+  }
+
+  const holdId = newId();
+  const bookingId = "b-campsite";
+  const booking: Booking = {
+    id: bookingId,
+    kind: "campsite",
+    refId: campsite.id,
+    title: bookingTitle,
+    day: `${base.intent.checkIn || "Apr 16"}-${(base.intent.checkOut || "Apr 18").replace(/^.* /, "")}`,
+    price,
+    refundTerms: `Fully refundable until ${nights} night(s) before`,
+    dependsOn: [],
+    status: "held",
+    holdId,
+  };
+  const held: Trip = {
+    ...base,
+    bookings: [...base.bookings, booking],
+    holds: [...base.holds, { id: holdId, bookingId, expiresAt: now + HOLD_MINUTES * 60_000, refundable: true, placedUnderPermissionId: decision.permissionId }],
+    plan: setStep(base.plan, "step-campsite", { status: "done", detail: `${booking.title} — held` }),
+    events: [...base.events, { id: newId(), timestamp: now, what: `Held ${booking.title} for $${price}.`, permissionId: decision.permissionId, actor: "CampOps", kind: "hold" }],
+  };
+  return continueTrip(held, now, [`Held ${booking.title} for $${price}.`]);
 }
 
 /**

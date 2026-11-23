@@ -14,13 +14,14 @@ import {
   fetchPhrasing,
   removeTripRequirement,
   requestAlternativeCampsite,
+  holdSpecificCampsite,
   runAgentTurn,
   widenTripSearch,
   RateLimitError,
 } from "@/lib/v3/agent-loop";
 import { tryAnswerCandidateQuestion } from "@/lib/v3/candidate-qa";
 import { isAlternativeRequestMessage } from "@/lib/v3/clarification";
-import { campsiteCharacteristicTags } from "@/lib/v3/fit";
+import { buildCandidateFit, campsiteCharacteristicTags } from "@/lib/v3/fit";
 import { evaluateCampsites } from "@/lib/evaluate";
 import { toV2SearchIntent } from "@/lib/v3/search-adapter";
 import {
@@ -71,7 +72,7 @@ function LiveTripPlan() {
   const { trip, dispatch } = useTrip();
   const { now } = useClock();
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"plan" | "review" | "activity" | "permissions">("plan");
+  const [view, setView] = useState<"plan" | "review" | "activity" | "permissions" | "campsite-options">("plan");
   const [activityFilter, setActivityFilter] = useState<"All" | "Your decisions" | "Holds" | "Changes" | "Searches">("All");
   const [commitError, setCommitError] = useState<string | null>(null);
 
@@ -188,7 +189,14 @@ function LiveTripPlan() {
       void applyEvent(resolveCampsiteUnavailableHold(trip, needsYou.id, needsYou.payload?.campsiteId ?? "", now));
     } else if (needsYou.kind === "no_match" && choice === "primary") {
       void applyEvent(widenTripSearch(trip, now));
+    } else if ((needsYou.kind === "campsite_unavailable" || needsYou.kind === "no_match") && choice === "secondary") {
+      setView("campsite-options");
     }
+  }
+
+  function handleHoldSpecificCampsite(campsiteId: string) {
+    void applyEvent(holdSpecificCampsite(trip, campsiteId, now));
+    setView("plan");
   }
 
   function handleClarifyingOption(option: string) {
@@ -339,6 +347,54 @@ function LiveTripPlan() {
             />
             <Button variant="ghost" label="Back" onClick={() => setView("plan")} />
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "campsite-options") {
+    // "Other Campsite Options" (PRD v3 §5.3 "request alternatives"): every
+    // ranked candidate at once, each with its real kept/traded-off fit, so
+    // the user compares before picking rather than cycling one at a time.
+    const result = evaluateCampsites(toV2SearchIntent(trip.intent));
+    const heldCampsite = trip.bookings.find((b) => b.kind === "campsite" && b.status === "held");
+    // "No match" still returns every site, ranked, for transparency (see
+    // evaluateCampsites's own doc comment) — cap the list the same way
+    // regardless of kind, so this never dumps the whole dataset.
+    const candidates = result.candidates.slice(0, 4);
+    return (
+      <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
+        <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <TopNav active="Trips" chargeStatus="Nothing charged yet" onNavigate={handleNavigate} />
+        </div>
+        <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-10">
+          <h1 className="text-heading-l text-[var(--color-text-primary)]">Other campsite options</h1>
+          <p className="text-body-s text-[var(--color-text-secondary)]">
+            Open {trip.intent.checkIn || "Apr 16"} to {trip.intent.checkOut || "Apr 18"}, sorted by fit.
+            {heldCampsite ? ` ${heldCampsite.title} is still my pick.` : ""}
+          </p>
+          <div className="space-y-3">
+            {candidates.map((candidate) => (
+              <CampsiteOption
+                key={candidate.campsite.id}
+                state={candidate.campsite.id === heldCampsite?.refId ? "recommended" : "alternative"}
+                eyebrow={candidate.campsite.id === heldCampsite?.refId ? "Current pick" : "Alternative"}
+                title={`${candidate.campsite.campgroundName} · ${candidate.campsite.siteName}`}
+                facts={[`$${candidate.campsite.pricePerNight}/night`]}
+                fit={buildCandidateFit(result, candidate.campsite.id, trip.intent)}
+                reason={candidate.explanation}
+                actions={
+                  candidate.campsite.id === heldCampsite?.refId
+                    ? undefined
+                    : [{ label: "Hold this site", variant: "primary", onClick: () => handleHoldSpecificCampsite(candidate.campsite.id) }]
+                }
+              />
+            ))}
+            {candidates.length === 0 && (
+              <p className="text-body-m text-[var(--color-text-secondary)]">No campsites currently answer this search.</p>
+            )}
+          </div>
+          <Button variant="ghost" label="Back to trip" onClick={() => setView("plan")} />
         </div>
       </div>
     );
@@ -528,7 +584,11 @@ function LiveTripPlan() {
           </div>
         </div>
       )}
-      {trip.plan.length > 0 && trip.bookings.length === 0 && (
+      {/* Stays visible until every step is done — not just until the FIRST
+          booking holds (PRD v3 §5.2 "communicate meaningful progress...
+          including which part of the plan is in progress"): the campsite
+          holding doesn't mean the activities after it are done too. */}
+      {trip.plan.length > 0 && !trip.plan.every((s) => s.status === "done") && (
         <div className="space-y-3">
           <h2 className="text-heading-m text-[var(--color-text-primary)]">My plan</h2>
           <div className="space-y-1">
