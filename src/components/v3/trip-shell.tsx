@@ -131,7 +131,8 @@ export function TripShell({
       </div>
 
       {/* Mobile: stacked task view + Conversation Peek. */}
-      <div className="flex min-h-0 flex-1 flex-col md:hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col md:hidden">
+        <AgentStatus {...agent} />
         <div className="flex-1 space-y-4 overflow-y-auto p-4 pb-36">
           {hero}
           {needsYou && <NeedsYouCard {...needsYou} />}

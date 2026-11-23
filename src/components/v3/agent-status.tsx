@@ -18,11 +18,11 @@ export function AgentStatus({
 }) {
   return (
     <div
-      className="flex h-16 w-full items-center justify-between border-b border-[var(--color-border-default)] px-5"
+      className="flex h-16 w-full min-w-0 items-center justify-between border-b border-[var(--color-border-default)] px-5"
       role="status"
       aria-live="polite"
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <span
           className={cn(
             "h-2.5 w-2.5 shrink-0 rounded-full",
