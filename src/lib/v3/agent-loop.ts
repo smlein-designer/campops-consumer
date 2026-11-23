@@ -9,6 +9,7 @@ import {
   questionFor,
 } from "@/lib/v3/clarification";
 import { summarizeNoMatch, widenSearch } from "@/lib/v3/no-match";
+import { buildCandidateFit } from "@/lib/v3/fit";
 import { buildRefinementAcknowledgment, diffAddedRequirements } from "@/lib/v3/refinement";
 import { activityTypesRequested, ACTIVITY_TYPE_LABEL } from "@/lib/v3/activity-match";
 import { checkActivityOverlap } from "@/lib/v3/rules-dependency";
@@ -203,16 +204,36 @@ export function continueTrip(
       // No-Match recovery (ported from v2's src/lib/no-match.ts): names the
       // specific failing requirement(s) instead of a generic "nothing fits."
       facts.push(summarizeNoMatch(result));
-      next = { ...next, needsYouQueue: [...next.needsYouQueue, {
-        id: newId(),
-        eyebrow: "No campsite fits every must-have",
-        message: "Want me to widen the search, or adjust a requirement?",
-        primaryLabel: "Widen search",
-        kind: "no_match",
-      }] };
+      const closest = result.candidates[0]?.campsite;
+      next = {
+        ...next,
+        needsYouQueue: [...next.needsYouQueue, {
+          id: newId(),
+          eyebrow: "No campsite fits every must-have",
+          message: "Want me to widen the search, or adjust a requirement?",
+          primaryLabel: "Widen search",
+          kind: "no_match",
+        }],
+        // Compromise visibility (PRD v3 §5.4 "must name any must-have that
+        // is missed") — the closest option, shown for transparency, with
+        // exactly what it fails to satisfy.
+        campsiteComparison: closest
+          ? {
+              id: newId(),
+              recommended: {
+                eyebrow: "Closest option",
+                title: `${closest.campgroundName} · ${closest.siteName}`,
+                facts: [],
+                fit: buildCandidateFit(result, closest.id, next.intent),
+                reason: "No site currently satisfies every must-have.",
+              },
+            }
+          : null,
+      };
       blocked = true;
       checkpoint();
     } else {
+      next = { ...next, campsiteComparison: null };
       const dateRange = computeDateRange(next.intent.checkIn || "Apr 16", next.intent.checkOut || "Apr 18");
       const nights = dateRange?.nights ?? DEFAULT_NIGHTS;
       const price = Math.round((top.pricePerNight * nights + top.serviceFee) * 100) / 100;

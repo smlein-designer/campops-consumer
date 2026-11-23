@@ -4,6 +4,7 @@ import { ACTIVITIES_BY_ID } from "@/lib/v3/providers";
 import { checkPermission } from "@/lib/v3/rules-permission";
 import { evaluateCampsites } from "@/lib/evaluate";
 import { toV2SearchIntent } from "@/lib/v3/search-adapter";
+import { buildCandidateFit } from "@/lib/v3/fit";
 import type { Booking, Condition, Trip } from "@/lib/v3/schemas";
 
 /**
@@ -228,6 +229,7 @@ export function resolveCampsiteUnavailableHold(trip: Trip, itemId: string, camps
       holds: [...trip.holds, { id: holdId, bookingId, expiresAt: now + 20 * 60_000, refundable: true, placedUnderPermissionId: "hold_refundable" }],
       plan: trip.plan.map((s) => (s.id === "step-campsite" ? { ...s, status: "done" as const, detail: `${booking.title} — held` } : s)),
       needsYouQueue: trip.needsYouQueue.filter((n) => n.id !== itemId),
+      campsiteComparison: null,
       events: [...trip.events, { id: newId(), timestamp: now, what: fact, permissionId: "hold_refundable", actor: "You", kind: "hold" }],
       agent: { ...trip.agent, working: false, phase: "complete", currentStepText: "Everything is held · ready to book" },
     },
@@ -271,6 +273,7 @@ export function fireCampsiteUnavailable(trip: Trip, campsiteId: string, now: num
     // are shown for transparency only, never recommended.
     const recommended = result.kind !== "no_match" ? result.candidates[0]?.campsite : undefined;
     if (recommended) {
+      const fit = buildCandidateFit(result, recommended.id, next.intent, lost);
       next = {
         ...next,
         needsYouQueue: [
@@ -285,6 +288,28 @@ export function fireCampsiteUnavailable(trip: Trip, campsiteId: string, now: num
             payload: { campsiteId: recommended.id },
           },
         ],
+        // Compromise/tradeoff explanation (PRD v3 §5.4, §7.3 "communicate
+        // meaningful differences from the original option") — what was
+        // kept, what traded off, named next to what was lost.
+        campsiteComparison: {
+          id: newId(),
+          lost: {
+            eyebrow: "Was your first pick",
+            title: `${lost.campgroundName} · ${lost.siteName}`,
+            facts: [],
+            fit: [{ state: "missed", requirement: "Availability", detail: "Booked by another party" }],
+            reason: "This site was just booked by someone else.",
+            unavailable: true,
+          },
+          recommended: {
+            eyebrow: "Recommended",
+            title: `${recommended.campgroundName} · ${recommended.siteName}`,
+            facts: [],
+            badge: "Best match",
+            fit,
+            reason: `${recommended.campgroundName}, ${recommended.siteName} is the closest match.`,
+          },
+        },
         agent: { ...next.agent, working: false, phase: "awaiting_user", currentStepText: "One item needs a decision" },
       };
       facts.push(`${recommended.campgroundName}, ${recommended.siteName} is the closest match.`);

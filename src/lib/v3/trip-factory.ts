@@ -77,5 +77,6 @@ export function emptyTrip(): Trip {
     pendingReadiness: false,
     clarifyingQuestion: null,
     candidateIndex: 0,
+    campsiteComparison: null,
   };
 }

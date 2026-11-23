@@ -36,6 +36,7 @@ import { Itinerary } from "@/components/v3/itinerary";
 import { RequirementChip } from "@/components/v3/requirement-chip";
 import { PlanStep } from "@/components/v3/plan-step";
 import { ClarifyingQuestion } from "@/components/v3/clarifying-question";
+import { CampsiteOption } from "@/components/v3/campsite-option";
 import { ApproveBar } from "@/components/v3/approve-bar";
 import { DemoPanel } from "@/components/v3/demo-panel";
 import { TopNav } from "@/components/v3/top-nav";
@@ -454,6 +455,33 @@ function LiveTripPlan() {
       onReview={() => setView("review")}
       onComposerSubmit={busy ? undefined : handleSubmit}
     >
+      {trip.campsiteComparison && (
+        <div className="space-y-3">
+          <h2 className="text-heading-m text-[var(--color-text-primary)]">Your campsite</h2>
+          <p className="text-body-s text-[var(--color-text-secondary)]">What changed, and what the replacement keeps and trades off.</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {trip.campsiteComparison.lost && (
+              <CampsiteOption
+                state="unavailable"
+                eyebrow={trip.campsiteComparison.lost.eyebrow}
+                title={trip.campsiteComparison.lost.title}
+                facts={trip.campsiteComparison.lost.facts}
+                fit={trip.campsiteComparison.lost.fit}
+                reason={trip.campsiteComparison.lost.reason}
+              />
+            )}
+            <CampsiteOption
+              state={trip.campsiteComparison.lost ? "recommended" : "closest"}
+              eyebrow={trip.campsiteComparison.recommended.eyebrow}
+              title={trip.campsiteComparison.recommended.title}
+              facts={trip.campsiteComparison.recommended.facts}
+              badge={trip.campsiteComparison.recommended.badge}
+              fit={trip.campsiteComparison.recommended.fit}
+              reason={trip.campsiteComparison.recommended.reason}
+            />
+          </div>
+        </div>
+      )}
       {trip.intent.requirements.length > 0 && (
         <div className="space-y-3">
           <h2 className="text-heading-m text-[var(--color-text-primary)]">What I heard</h2>

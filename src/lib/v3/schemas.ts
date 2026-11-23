@@ -255,6 +255,30 @@ export type PendingClarifyingQuestion = {
   options: string[];
 };
 
+/** One side of a campsite comparison (CampsiteOption component) — the
+ * kept/tradeoff/missed fit breakdown PRD v3 §5.4 requires for any
+ * recommendation ("which requirements are kept, which are traded off...
+ * must name any must-have that is missed"). */
+export type CampsiteFitCard = {
+  eyebrow: string;
+  title: string;
+  facts: string[];
+  badge?: string;
+  fit: { state: "kept" | "tradeoff" | "missed"; requirement: string; detail: string }[];
+  reason: string;
+  /** Strikes through the title — the site that's no longer available. */
+  unavailable?: boolean;
+};
+
+/** A campsite comparison shown in the thread: the site that's gone (if any)
+ * next to the recommended replacement, or just the closest option when
+ * nothing has ever been held (no-match). Cleared once resolved. */
+export type CampsiteComparison = {
+  id: string;
+  lost?: CampsiteFitCard;
+  recommended: CampsiteFitCard;
+};
+
 // ---- Deterministic gates (ported from v2's prerequisite/readiness gates) --
 
 export type PrerequisiteKind = "check_in_date" | "check_out_date" | "party_size";
@@ -323,4 +347,6 @@ export type Trip = {
   /** Which ranked candidate from the last campsite search is active — lets
    * the user cycle through alternatives (ported from v2's candidateIndex). */
   candidateIndex: number;
+  /** The current campsite comparison card(s), or null. */
+  campsiteComparison: CampsiteComparison | null;
 };
