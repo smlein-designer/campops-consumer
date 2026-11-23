@@ -73,5 +73,9 @@ export function emptyTrip(): Trip {
     conditions: [],
     events: [],
     authorization: { removedBookingIds: [], paymentMethodLabel: null, approved: false },
+    pendingPrerequisite: null,
+    pendingReadiness: false,
+    clarifyingQuestion: null,
+    candidateIndex: 0,
   };
 }

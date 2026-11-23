@@ -29,6 +29,13 @@ export const V3IntentExtractionSchema = z.object({
     .string()
     .nullable()
     .describe('Present only when status is "needs_clarification": one clear question.'),
+  clarificationOptions: z
+    .array(z.string())
+    .nullable()
+    .optional()
+    .describe(
+      'Present only when status is "needs_clarification" AND the question has a short, natural set of discrete answers (e.g. a choice of dates) — 2 to 4 short option labels the user could tap instead of typing. Null when there is no natural short-answer set.',
+    ),
   unsupportedReason: z
     .string()
     .nullable()

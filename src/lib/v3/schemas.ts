@@ -230,7 +230,7 @@ export type AgentState = {
 
 /** `kind`/`payload` let the UI route a button click to the right resolver
  * (src/lib/v3/scripted-events.ts) without string-matching the copy. */
-export type NeedsYouKind = "forecast_move" | "hold_expired" | "campsite_unavailable";
+export type NeedsYouKind = "forecast_move" | "hold_expired" | "campsite_unavailable" | "no_match";
 
 export type NeedsYouItem = {
   id: string;
@@ -245,6 +245,29 @@ export type NeedsYouItem = {
 // ---- Conversation thread --------------------------------------------------
 
 export type ThreadMessage = { id: string; from: "user" | "agent"; message: string };
+
+/** An inline multiple-choice question in the thread (the ClarifyingQuestion
+ * component) — the model's own needs_clarification question, shown with
+ * quick replies when it supplied any (ported from v2's quickReplies pattern). */
+export type PendingClarifyingQuestion = {
+  id: string;
+  question: string;
+  options: string[];
+};
+
+// ---- Deterministic gates (ported from v2's prerequisite/readiness gates) --
+
+export type PrerequisiteKind = "check_in_date" | "check_out_date" | "party_size";
+
+/** Tracks an outstanding deterministic prerequisite ask across turns — the
+ * SAME distinction v2 draws between the model's own semantic judgment
+ * (needs_clarification) and an objectively missing structured field. */
+export type PendingPrerequisite = {
+  missing: PrerequisiteKind[];
+  /** Loop-protection counter: consecutive turns that looked like a date
+   * attempt but still didn't resolve (ported from v2's dateAskAttempts). */
+  dateAskAttempts: number;
+};
 
 // ---- Activity record (Build Brief §7, §11) -------------------------------
 
@@ -284,4 +307,15 @@ export type Trip = {
   conditions: Condition[];
   events: TripEvent[];
   authorization: Authorization;
+  /** Outstanding deterministic prerequisite ask (dates, party size), or null. */
+  pendingPrerequisite: PendingPrerequisite | null;
+  /** True while the app's own recommendation-readiness gate is waiting on
+   * the user (ported from v2's pendingRecommendationReadiness). */
+  pendingReadiness: boolean;
+  /** The model's own needs_clarification question, rendered as a
+   * ClarifyingQuestion card with quick replies — cleared once answered. */
+  clarifyingQuestion: PendingClarifyingQuestion | null;
+  /** Which ranked candidate from the last campsite search is active — lets
+   * the user cycle through alternatives (ported from v2's candidateIndex). */
+  candidateIndex: number;
 };

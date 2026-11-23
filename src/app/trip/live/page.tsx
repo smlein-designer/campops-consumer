@@ -8,7 +8,18 @@ import { useState } from "react";
 import { ClockProvider, useClock } from "@/lib/v3/clock";
 import { TripProvider, useTrip } from "@/lib/v3/store";
 import { emptyTrip } from "@/lib/v3/trip-factory";
-import { acceptSuggestion, dismissSuggestion, fetchPhrasing, runAgentTurn } from "@/lib/v3/agent-loop";
+import {
+  acceptSuggestion,
+  dismissSuggestion,
+  fetchPhrasing,
+  removeTripRequirement,
+  requestAlternativeCampsite,
+  runAgentTurn,
+  widenTripSearch,
+  RateLimitError,
+} from "@/lib/v3/agent-loop";
+import { tryAnswerCandidateQuestion } from "@/lib/v3/candidate-qa";
+import { isAlternativeRequestMessage } from "@/lib/v3/clarification";
 import {
   fireCampsiteUnavailable,
   fireForecastChange,
@@ -24,6 +35,7 @@ import { LandingHero } from "@/components/v3/landing-hero";
 import { Itinerary } from "@/components/v3/itinerary";
 import { RequirementChip } from "@/components/v3/requirement-chip";
 import { PlanStep } from "@/components/v3/plan-step";
+import { ClarifyingQuestion } from "@/components/v3/clarifying-question";
 import { ApproveBar } from "@/components/v3/approve-bar";
 import { DemoPanel } from "@/components/v3/demo-panel";
 import { TopNav } from "@/components/v3/top-nav";
@@ -72,6 +84,40 @@ function LiveTripPlan() {
   }
 
   async function handleSubmit(message: string) {
+    // Deterministic factual Q&A about the held campsite (ported from v2's
+    // Active-Recommendation Follow-Up correction): answered from real
+    // structured data, with no model call and no trip mutation at all.
+    const candidateAnswer = tryAnswerCandidateQuestion(trip, message);
+    if (candidateAnswer) {
+      dispatch({
+        type: "RESET",
+        trip: {
+          ...trip,
+          thread: [
+            ...trip.thread,
+            { id: newId(), from: "user", message },
+            { id: newId(), from: "agent", message: candidateAnswer },
+          ],
+        },
+      });
+      return;
+    }
+
+    // "Show me another option" (ported from v2's candidate cycling, adapted
+    // to v3's hold-first model) — checked before the message ever reaches
+    // the model, same priority as the candidate-question check above.
+    if (isAlternativeRequestMessage(message) && trip.bookings.some((b) => b.kind === "campsite" && b.status === "held")) {
+      setBusy(true);
+      try {
+        const withUserLine = { ...trip, thread: [...trip.thread, { id: newId(), from: "user" as const, message }] };
+        const result = requestAlternativeCampsite(trip, now);
+        await applyEvent(result, withUserLine);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setBusy(true);
     dispatch({ type: "SET_AGENT", agent: { working: true, phase: "interpreting", currentStepText: "Reading your message" } });
     try {
@@ -93,15 +139,24 @@ function LiveTripPlan() {
         if (i < checkpoints.length - 1) await sleep(650);
       }
     } catch (err) {
+      // Public demo rate limiting (ported from v2): a concise, calm message
+      // — never the generic error path — and the user's trip so far is
+      // left untouched; they can just try again shortly.
+      const message =
+        err instanceof RateLimitError ? err.message : "Something went wrong reaching the model — try again?";
       dispatch({
         type: "ADD_MESSAGE",
-        message: { id: newId(), from: "agent", message: "Something went wrong reaching the model — try again?" },
+        message: { id: newId(), from: "agent", message },
       });
       dispatch({ type: "SET_AGENT", agent: { working: false, phase: "awaiting_user" } });
-      console.error(err);
+      if (!(err instanceof RateLimitError)) console.error(err);
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleRemoveRequirement(requirementId: string) {
+    void applyEvent(removeTripRequirement(trip, requirementId, now));
   }
 
   const held = trip.bookings.some((b) => b.status === "held");
@@ -115,7 +170,13 @@ function LiveTripPlan() {
       void applyEvent(resolveHoldExpiryRehold(trip, needsYou.id, needsYou.payload?.bookingId ?? "", now));
     } else if (needsYou.kind === "campsite_unavailable" && choice === "primary") {
       void applyEvent(resolveCampsiteUnavailableHold(trip, needsYou.id, needsYou.payload?.campsiteId ?? "", now));
+    } else if (needsYou.kind === "no_match" && choice === "primary") {
+      void applyEvent(widenTripSearch(trip, now));
     }
+  }
+
+  function handleClarifyingOption(option: string) {
+    void handleSubmit(option);
   }
 
   function handleRemove(bookingId: string) {
@@ -261,6 +322,15 @@ function LiveTripPlan() {
           : undefined
       }
       thread={trip.thread.map((m) => ({ from: m.from, message: m.message }))}
+      threadFooter={
+        trip.clarifyingQuestion ? (
+          <ClarifyingQuestion
+            question={trip.clarifyingQuestion.question}
+            options={trip.clarifyingQuestion.options}
+            onSelect={handleClarifyingOption}
+          />
+        ) : undefined
+      }
       approveBar={held ? <ApproveBar amount={`${formatUsd(tripTotal(trip.bookings))} total`} summary="Nothing charged yet" onReview={() => setView("review")} /> : undefined}
       onReview={() => setView("review")}
       onComposerSubmit={busy ? undefined : handleSubmit}
@@ -270,7 +340,12 @@ function LiveTripPlan() {
           <h2 className="text-heading-m text-[var(--color-text-primary)]">What I heard</h2>
           <div className="flex flex-wrap gap-2">
             {trip.intent.requirements.map((r) => (
-              <RequirementChip key={r.id} type={r.changed ? "changed" : r.tier === "must" ? "mustHave" : "niceToHave"} label={r.label} />
+              <RequirementChip
+                key={r.id}
+                type={r.changed ? "changed" : r.tier === "must" ? "mustHave" : "niceToHave"}
+                label={r.label}
+                onClick={() => handleRemoveRequirement(r.id)}
+              />
             ))}
           </div>
         </div>

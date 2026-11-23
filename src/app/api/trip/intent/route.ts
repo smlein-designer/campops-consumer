@@ -32,6 +32,8 @@ requirements plus a status.
 - driveLimitHours/budgetUsd: only from explicit statements ("within 2 hours", "under $90 a night").
 - status "actionable": enough is known to search (even a single clear preference is enough to start).
 - status "needs_clarification": the message gives essentially nothing to act on. Ask one short, specific question.
+  If the question has a short, natural set of discrete answers (e.g. a choice between two date ranges), also give
+  2-4 short clarificationOptions the user could tap instead of typing; otherwise leave clarificationOptions null.
 - status "unsupported": the request is for something outside CampOps' scope (flights, hotels, rental cars,
   unrelated chit-chat). Say briefly what's out of scope and that CampOps can continue with the camping request.
 Only one of clarificationQuestion/unsupportedReason is non-null, matching status.`;
