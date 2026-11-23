@@ -145,6 +145,33 @@ function releaseBookingAndDependents(trip: Trip, bookingId: string, now: number)
   };
 }
 
+/**
+ * Offers one suggestion at the natural pause (Build Brief §10, PRD v3 §9) if
+ * nothing is already offered and the plan is fully resolved — shared by
+ * continueTrip's own completion step and by dismissSuggestion, which must
+ * immediately offer the NEXT candidate rather than leaving the user with
+ * nothing until their next message.
+ */
+function offerSuggestionIfNatural(trip: Trip): Trip {
+  if (trip.suggestions.some((s) => s.state === "offered")) return trip;
+  if (!trip.plan.every((s) => s.status === "done")) return trip;
+  const heldCampsiteBooking = trip.bookings.find((b) => b.kind === "campsite" && b.status === "held");
+  if (!heldCampsiteBooking) return trip;
+  const campsite = evaluateCampsites(toV2SearchIntent(trip.intent)).candidates.find(
+    (c) => c.campsite.id === heldCampsiteBooking.refId,
+  )?.campsite;
+  if (!campsite) return trip;
+  const suggestion = suggestionFor({
+    campsite,
+    dismissedTypes: trip.dismissedSuggestionTypes,
+    permissions: trip.permissions,
+    hasPendingDecision: false,
+    bookedActivityIds: trip.bookings.filter((b) => b.kind === "activity").map((b) => b.refId),
+  });
+  if (!suggestion || trip.suggestions.some((s) => s.id === suggestion.id)) return trip;
+  return { ...trip, suggestions: [...trip.suggestions, suggestion] };
+}
+
 export type TurnCheckpoint = { trip: Trip; facts: string[] };
 
 /**
@@ -369,23 +396,7 @@ export function continueTrip(
     checkpoint();
   } else if (allDone) {
     // Natural pause: at most one suggestion, never mid-decision (Build Brief §10).
-    if (heldCampsiteBooking) {
-      const campsite = evaluateCampsites(toV2SearchIntent(next.intent)).candidates.find(
-        (c) => c.campsite.id === heldCampsiteBooking!.refId,
-      )?.campsite;
-      if (campsite) {
-        const suggestion = suggestionFor({
-          campsite,
-          dismissedTypes: next.dismissedSuggestionTypes,
-          permissions: next.permissions,
-          hasPendingDecision: false,
-          bookedActivityIds: next.bookings.filter((b) => b.kind === "activity").map((b) => b.refId),
-        });
-        if (suggestion && !next.suggestions.some((s) => s.id === suggestion.id)) {
-          next = { ...next, suggestions: [...next.suggestions, suggestion] };
-        }
-      }
-    }
+    next = offerSuggestionIfNatural(next);
     next = {
       ...next,
       agent: { ...next.agent, working: false, phase: "complete", currentStepText: "Everything is held · ready to book" },
@@ -760,11 +771,14 @@ export function dismissSuggestion(trip: Trip, suggestionId: string): Trip {
   if (!suggestion) return trip;
   const dismissedKey =
     suggestion.target.kind === "addon" ? suggestion.target.id : ACTIVITIES_BY_ID[suggestion.target.id]?.type;
-  return {
+  const next: Trip = {
     ...trip,
     suggestions: trip.suggestions.map((s) => (s.id === suggestionId ? { ...s, state: "dismissed" as const } : s)),
     dismissedSuggestionTypes: dismissedKey ? [...trip.dismissedSuggestionTypes, dismissedKey] : trip.dismissedSuggestionTypes,
   };
+  // Immediately offer the next candidate, if any — the user shouldn't have
+  // to send another message just to see what else is available.
+  return offerSuggestionIfNatural(next);
 }
 
 export type { NeedsYouItem };

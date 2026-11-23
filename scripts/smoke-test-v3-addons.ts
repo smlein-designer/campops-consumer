@@ -4,11 +4,12 @@
  * and bookable — src/lib/v3/add-ons.ts existed with zero consumers before
  * this; suggestionFor only ever considered activities.
  */
-import { acceptSuggestion, dismissSuggestion } from "../src/lib/v3/agent-loop";
+import { acceptSuggestion, applyTurn, dismissSuggestion } from "../src/lib/v3/agent-loop";
 import { suggestionFor } from "../src/lib/v3/rules-suggestion";
 import { defaultPermissions } from "../src/lib/v3/trip-factory";
 import { emptyTrip } from "../src/lib/v3/trip-factory";
 import { CAMPSITES } from "../src/lib/campsites";
+import type { V3IntentExtraction } from "../src/lib/v3/intent-schema";
 
 let failures = 0;
 
@@ -74,6 +75,34 @@ run("Dismissing an add-on suggestion never offers that exact add-on again", () =
     hasPendingDecision: false,
   });
   assert(again === null || again.target.id !== suggestion!.target.id, "the exact dismissed add-on is never re-offered");
+});
+
+run("Dismissing a suggestion immediately offers the next one, with no extra message needed", () => {
+  const extraction: V3IntentExtraction = {
+    checkIn: "Apr 16",
+    checkOut: "Apr 18",
+    adults: 4,
+    pets: 1,
+    originZip: null,
+    driveLimitHours: null,
+    budgetUsd: null,
+    requirements: [
+      { label: "Waterfront", tier: "must" },
+      { label: "Dogs OK", tier: "must" },
+    ],
+    status: "actionable",
+    clarificationQuestion: null,
+    unsupportedReason: null,
+    clarificationOptions: null,
+  };
+  const { trip } = applyTurn(emptyTrip(), extraction, now);
+  const first = trip.suggestions.find((s) => s.state === "offered");
+  assert(!!first, "a suggestion is offered once the plan settles");
+
+  const afterDismiss = dismissSuggestion(trip, first!.id);
+  const next = afterDismiss.suggestions.find((s) => s.state === "offered");
+  assert(!!next, "a new suggestion is offered right after dismissing, without waiting for another message");
+  assert(next?.id !== first!.id, "the new suggestion is a different one");
 });
 
 if (failures > 0) {
