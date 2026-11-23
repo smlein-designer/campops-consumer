@@ -131,9 +131,11 @@ function LiveTripPlan() {
       const result = evaluateCampsites(toV2SearchIntent(trip.intent));
       const target = result.kind !== "no_match" ? matchNamedCampsite(message, result.candidates.map((c) => c.campsite)) : null;
       if (target) {
+        const userMsg = { id: newId(), from: "user" as const, message };
+        dispatch({ type: "ADD_MESSAGE", message: userMsg });
         setBusy(true);
         try {
-          const withUserLine = { ...trip, thread: [...trip.thread, { id: newId(), from: "user" as const, message }] };
+          const withUserLine = { ...trip, thread: [...trip.thread, userMsg] };
           const switched = holdSpecificCampsite(trip, target.id, now);
           await applyEvent(switched, withUserLine);
         } finally {
@@ -149,9 +151,11 @@ function LiveTripPlan() {
     // to v3's hold-first model) — checked before the message ever reaches
     // the model, same priority as the candidate-question check above.
     if (isAlternativeRequestMessage(message) && trip.bookings.some((b) => b.kind === "campsite" && b.status === "held")) {
+      const userMsg = { id: newId(), from: "user" as const, message };
+      dispatch({ type: "ADD_MESSAGE", message: userMsg });
       setBusy(true);
       try {
-        const withUserLine = { ...trip, thread: [...trip.thread, { id: newId(), from: "user" as const, message }] };
+        const withUserLine = { ...trip, thread: [...trip.thread, userMsg] };
         const result = requestAlternativeCampsite(trip, now);
         await applyEvent(result, withUserLine);
       } finally {
@@ -160,6 +164,8 @@ function LiveTripPlan() {
       return;
     }
 
+    const userMsg = { id: newId(), from: "user" as const, message };
+    dispatch({ type: "ADD_MESSAGE", message: userMsg });
     setBusy(true);
     dispatch({ type: "SET_AGENT", agent: { working: true, phase: "interpreting", currentStepText: "Reading your message" } });
     try {
@@ -171,7 +177,7 @@ function LiveTripPlan() {
       // state in one invisible step.
       const allLines = await fetchPhrasing(factsToPhrase);
       let lineCursor = 0;
-      let thread = [...trip.thread, { id: newId(), from: "user" as const, message }];
+      let thread = [...trip.thread, userMsg];
       for (let i = 0; i < checkpoints.length; i++) {
         const cp = checkpoints[i];
         const lines = allLines.slice(lineCursor, lineCursor + cp.facts.length);
