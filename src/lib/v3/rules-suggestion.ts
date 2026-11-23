@@ -1,12 +1,16 @@
 import type { Campsite } from "@/lib/schemas";
+import { addOnsNear } from "@/lib/v3/add-ons";
 import { ACTIVITIES, activitiesNear, providerForActivity } from "@/lib/v3/providers";
 import type { Activity, Permission, Suggestion } from "@/lib/v3/schemas";
 
 /**
- * Suggestion rules (Build Brief §10): only items at or near the chosen
- * campsite; at most one; never while a decision is pending (never in the
- * Needs You slot, never mid-decision); a dismissed type is never offered
- * again this trip; off entirely when the permission is off.
+ * Suggestion rules (Build Brief §10, PRD v3 §9): only items at or near the
+ * chosen campsite; at most one; never while a decision is pending (never in
+ * the Needs You slot, never mid-decision); a dismissed item is never offered
+ * again this trip; off entirely when the permission is off. An activity is
+ * tried first (it pairs with the trip's requested activities); a campground
+ * add-on fills in when no activity is left to suggest — PRD v3 §10 lists
+ * add-ons as part of minimum viable data, not just activities.
  */
 export function suggestionFor({
   campsite,
@@ -29,17 +33,30 @@ export function suggestionFor({
   const permission = permissions.find((p) => p.id === "suggest_extras");
   if (!permission?.enabled) return null;
 
-  const candidate = activitiesNear(campsite, activities).find(
+  const activityCandidate = activitiesNear(campsite, activities).find(
     (a) => !dismissedTypes.includes(a.type) && !bookedActivityIds.includes(a.id),
   );
-  if (!candidate) return null;
+  if (activityCandidate) {
+    const provider = providerForActivity(activityCandidate);
+    return {
+      id: `suggestion-${activityCandidate.id}`,
+      target: { kind: "activity", id: activityCandidate.id },
+      reason: "Pairs well with your site.",
+      source: `Offered by ${provider.name}`,
+      state: "offered",
+    };
+  }
 
-  const provider = providerForActivity(candidate);
-  return {
-    id: `suggestion-${candidate.id}`,
-    activityId: candidate.id,
-    reason: "Pairs well with your site.",
-    source: `Offered by ${provider.name}`,
-    state: "offered",
-  };
+  const addOnCandidate = addOnsNear(campsite.campgroundName).find((a) => !dismissedTypes.includes(a.id));
+  if (addOnCandidate) {
+    return {
+      id: `suggestion-${addOnCandidate.id}`,
+      target: { kind: "addon", id: addOnCandidate.id },
+      reason: `Pairs well with your stay at ${campsite.campgroundName}.`,
+      source: `Offered by ${addOnCandidate.campgroundName}`,
+      state: "offered",
+    };
+  }
+
+  return null;
 }

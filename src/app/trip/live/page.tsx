@@ -54,6 +54,7 @@ import { bookingKindLabel } from "@/lib/v3/booking-display";
 import { commitBooking, removeBooking } from "@/lib/v3/authorize";
 import { formatUsd, tripTotal } from "@/lib/v3/money";
 import { ACTIVITIES_BY_ID, providerForActivity } from "@/lib/v3/providers";
+import { ADD_ONS } from "@/lib/v3/add-ons";
 import { photoSrc } from "@/lib/v3/photos";
 import type { Trip, TripEventKind } from "@/lib/v3/schemas";
 
@@ -516,7 +517,20 @@ function LiveTripPlan() {
       ) : null}
       {offeredSuggestion &&
         (() => {
-          const activity = ACTIVITIES_BY_ID[offeredSuggestion.activityId];
+          if (offeredSuggestion.target.kind === "addon") {
+            const addOn = ADD_ONS.find((a) => a.id === offeredSuggestion.target.id);
+            if (!addOn) return null;
+            return (
+              <SuggestionCard
+                title={`${addOn.name} · $${addOn.price}`}
+                reason={offeredSuggestion.reason}
+                source={offeredSuggestion.source}
+                onAdd={() => handleAcceptSuggestion(offeredSuggestion.id)}
+                onDismiss={() => handleDismissSuggestion(offeredSuggestion.id)}
+              />
+            );
+          }
+          const activity = ACTIVITIES_BY_ID[offeredSuggestion.target.id];
           if (!activity) return null;
           const provider = providerForActivity(activity);
           return (

@@ -87,7 +87,7 @@ run("Campsite unavailable: the lost site and the replacement are compared with f
   assert(!!lostTrip.campsiteComparison, "a comparison is attached when the preferred site is lost");
   assert(lostTrip.campsiteComparison?.lost?.unavailable === true, "the lost side is marked unavailable (struck through)");
   assert(
-    lostTrip.campsiteComparison?.lost?.fit.some((r) => r.state === "missed" && r.requirement === "Availability"),
+    !!lostTrip.campsiteComparison?.lost?.fit.some((r) => r.state === "missed" && r.requirement === "Availability"),
     "the lost side names availability as the missed requirement",
   );
   const recommendedFit = lostTrip.campsiteComparison?.recommended.fit ?? [];

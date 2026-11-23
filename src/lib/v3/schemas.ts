@@ -146,9 +146,13 @@ export type Hold = {
 
 export type SuggestionState = "offered" | "added" | "dismissed";
 
+/** What the suggestion is for — an Activity or a campground AddOn (PRD v3
+ * §9/§10: "optional extras" cover both, not activities only). */
+export type SuggestionTarget = { kind: "activity"; id: string } | { kind: "addon"; id: string };
+
 export type Suggestion = {
   id: string;
-  activityId: string;
+  target: SuggestionTarget;
   reason: string;
   source: string;
   state: SuggestionState;

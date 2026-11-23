@@ -119,7 +119,8 @@ run("Dismissed suggestion: a dismissed activity type is never offered again", ()
   const first = suggestionFor({ campsite: pineHollow, dismissedTypes: [], permissions, hasPendingDecision: false });
   assert(first !== null, "a suggestion is offered at Pine Hollow with nothing dismissed yet");
 
-  const dismissedType = ACTIVITIES_BY_ID[first!.activityId].type;
+  assert(first!.target.kind === "activity", "the first suggestion at Pine Hollow is an activity");
+  const dismissedType = first!.target.kind === "activity" ? ACTIVITIES_BY_ID[first!.target.id].type : "";
   const afterDismiss = suggestionFor({
     campsite: pineHollow,
     dismissedTypes: [dismissedType],
@@ -127,7 +128,9 @@ run("Dismissed suggestion: a dismissed activity type is never offered again", ()
     hasPendingDecision: false,
   });
   assert(
-    afterDismiss === null || ACTIVITIES_BY_ID[afterDismiss.activityId].type !== dismissedType,
+    afterDismiss === null ||
+      afterDismiss.target.kind !== "activity" ||
+      ACTIVITIES_BY_ID[afterDismiss.target.id].type !== dismissedType,
     "the dismissed type is never offered again",
   );
 
@@ -150,7 +153,9 @@ run("Dismissed suggestion: a dismissed activity type is never offered again", ()
     hasPendingDecision: false,
   });
   assert(
-    noWaterSite === null || !ACTIVITIES_BY_ID[noWaterSite.activityId].requiresWaterAccess,
+    noWaterSite === null ||
+      noWaterSite.target.kind !== "activity" ||
+      !ACTIVITIES_BY_ID[noWaterSite.target.id].requiresWaterAccess,
     "a no-water campsite is never offered a water-dependent suggestion",
   );
 });

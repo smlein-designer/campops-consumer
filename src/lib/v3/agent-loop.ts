@@ -16,6 +16,7 @@ import { checkActivityOverlap } from "@/lib/v3/rules-dependency";
 import { checkPermission } from "@/lib/v3/rules-permission";
 import { suggestionFor } from "@/lib/v3/rules-suggestion";
 import { ACTIVITIES_BY_ID, activitiesNear } from "@/lib/v3/providers";
+import { ADD_ONS } from "@/lib/v3/add-ons";
 import { activityBookingPrice } from "@/lib/v3/money";
 import { toV2SearchIntent } from "@/lib/v3/search-adapter";
 import { V3IntentExtractionSchema, type V3IntentExtraction } from "@/lib/v3/intent-schema";
@@ -659,20 +660,63 @@ export function removeTripRequirement(
 export function acceptSuggestion(trip: Trip, suggestionId: string, now: number): { trip: Trip; factsToPhrase: string[] } {
   const suggestion = trip.suggestions.find((s) => s.id === suggestionId && s.state === "offered");
   if (!suggestion) return { trip, factsToPhrase: [] };
-  const activity = ACTIVITIES_BY_ID[suggestion.activityId];
+
+  const campsiteBooking = trip.bookings.find((b) => b.kind === "campsite");
+  const markAdded = (t: Trip): Trip => ({
+    ...t,
+    suggestions: t.suggestions.map((s) => (s.id === suggestionId ? { ...s, state: "added" as const } : s)),
+  });
+
+  if (suggestion.target.kind === "addon") {
+    const addOn = ADD_ONS.find((a) => a.id === suggestion.target.id);
+    if (!addOn) return { trip, factsToPhrase: [] };
+    const decision = checkPermission(trip.permissions, { type: "hold", refundable: true, amountUsd: addOn.price });
+    const fact =
+      decision.result === "allow" ? `Added ${addOn.name} for $${addOn.price}.` : `Found ${addOn.name} for $${addOn.price} — asking before adding it.`;
+    let next = markAdded(trip);
+    if (decision.result === "allow") {
+      const holdId = newId();
+      const bookingId = `b-addon-${addOn.id}`;
+      next = {
+        ...next,
+        bookings: [
+          ...next.bookings,
+          {
+            id: bookingId,
+            kind: "addon",
+            refId: addOn.id,
+            title: addOn.name,
+            day: campsiteBooking?.day ?? "Whole stay",
+            price: addOn.price,
+            refundTerms: addOn.refundTerms,
+            dependsOn: campsiteBooking ? [campsiteBooking.id] : [],
+            status: "held",
+            holdId,
+          },
+        ],
+        holds: [...next.holds, { id: holdId, bookingId, expiresAt: now + HOLD_MINUTES * 60_000, refundable: true, placedUnderPermissionId: decision.permissionId }],
+        events: [...next.events, { id: newId(), timestamp: now, what: fact, permissionId: decision.permissionId, actor: "CampOps", kind: "hold" }],
+      };
+    } else {
+      next = {
+        ...next,
+        needsYouQueue: [...next.needsYouQueue, { id: newId(), eyebrow: "Asking before holding", message: `Add ${addOn.name} for $${addOn.price}?`, primaryLabel: `Add · $${addOn.price}` }],
+        agent: { ...next.agent, working: false, phase: "awaiting_user", currentStepText: "One item needs a decision" },
+      };
+    }
+    return { trip: next, factsToPhrase: [fact] };
+  }
+
+  const activity = ACTIVITIES_BY_ID[suggestion.target.id];
   if (!activity) return { trip, factsToPhrase: [] };
 
   const price = activityBookingPrice(activity, trip.intent.adults || DEFAULT_PARTY_SIZE);
   const decision = checkPermission(trip.permissions, { type: "hold", refundable: true, amountUsd: price });
   const slot = activity.slots[0];
-  const campsiteBooking = trip.bookings.find((b) => b.kind === "campsite");
 
   const fact = decision.result === "allow" ? `Held ${activity.name} for $${price}.` : `Found ${activity.name} for $${price} — asking before holding it.`;
 
-  let next: Trip = {
-    ...trip,
-    suggestions: trip.suggestions.map((s) => (s.id === suggestionId ? { ...s, state: "added" as const } : s)),
-  };
+  let next: Trip = markAdded(trip);
 
   if (decision.result === "allow") {
     const holdId = newId();
@@ -709,15 +753,17 @@ export function acceptSuggestion(trip: Trip, suggestionId: string, now: number):
   return { trip: next, factsToPhrase: [fact] };
 }
 
-/** Dismissing a suggestion: that activity TYPE is never offered again this trip (Build Brief §10). */
+/** Dismissing a suggestion: that item (activity type, or the exact add-on)
+ * is never offered again this trip (Build Brief §10, PRD v3 §9). */
 export function dismissSuggestion(trip: Trip, suggestionId: string): Trip {
   const suggestion = trip.suggestions.find((s) => s.id === suggestionId);
   if (!suggestion) return trip;
-  const activity = ACTIVITIES_BY_ID[suggestion.activityId];
+  const dismissedKey =
+    suggestion.target.kind === "addon" ? suggestion.target.id : ACTIVITIES_BY_ID[suggestion.target.id]?.type;
   return {
     ...trip,
     suggestions: trip.suggestions.map((s) => (s.id === suggestionId ? { ...s, state: "dismissed" as const } : s)),
-    dismissedSuggestionTypes: activity ? [...trip.dismissedSuggestionTypes, activity.type] : trip.dismissedSuggestionTypes,
+    dismissedSuggestionTypes: dismissedKey ? [...trip.dismissedSuggestionTypes, dismissedKey] : trip.dismissedSuggestionTypes,
   };
 }
 

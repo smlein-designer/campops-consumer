@@ -114,7 +114,9 @@ run("Scenario: user dismisses a suggestion", () => {
   const rerun = applyTurn(dismissed, extraction({ requirements: golden.intent.requirements }), now).trip;
   const dismissedType = dismissed.dismissedSuggestionTypes[0];
   assert(
-    !rerun.suggestions.some((s) => s.state === "offered" && ACTIVITIES_BY_ID[s.activityId]?.type === dismissedType),
+    !rerun.suggestions.some(
+      (s) => s.state === "offered" && s.target.kind === "activity" && ACTIVITIES_BY_ID[s.target.id]?.type === dismissedType,
+    ),
     "no new suggestion of the dismissed type appears",
   );
 });
