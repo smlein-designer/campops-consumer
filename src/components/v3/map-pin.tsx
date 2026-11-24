@@ -2,29 +2,45 @@ import { cn } from "@/lib/utils";
 
 export type MapPinStatus = "base" | "held" | "needsOk" | "searching";
 
-// Dot color matches booking status (Handoff Spec §3).
+// Figma Map Pin (node 12:443): a white-ringed dot colored by booking status,
+// beside a small white label. Base camp is the larger brand-green dot.
 const pinColors: Record<MapPinStatus, string> = {
-  base: "bg-[var(--stone-600)]",
+  base: "bg-[var(--color-bg-brand)]",
   held: "bg-[var(--color-status-working)]",
   needsOk: "bg-[var(--color-status-attention)]",
-  searching: "bg-[var(--lake-700)]",
+  searching: "bg-[var(--color-bg-control-off)]",
 };
 
 export function MapPin({
   status,
   place,
   detail,
+  labelSide = "right",
 }: {
   status: MapPinStatus;
   place: string;
   detail: string;
+  labelSide?: "left" | "right";
 }) {
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] py-1 pr-3 pl-1.5">
-      <span className={cn("h-3 w-3 shrink-0 rounded-full", pinColors[status])} />
-      <div className="leading-tight">
+    <div
+      className={cn(
+        "flex items-center gap-2",
+        labelSide === "left" && "flex-row-reverse",
+      )}
+    >
+      <span
+        className={cn(
+          "shrink-0 rounded-full border-[3px] border-[var(--color-bg-surface)]",
+          status === "base" ? "size-[22px]" : "size-[18px]",
+          pinColors[status],
+        )}
+      />
+      <div className="rounded-md bg-[var(--color-bg-surface)] px-2 py-1 whitespace-nowrap">
         <p className="text-label-s text-[var(--color-text-primary)]">{place}</p>
-        <p className="text-caption text-[var(--color-text-tertiary)]">{detail}</p>
+        <p className="text-caption text-[var(--color-text-secondary)]">
+          {detail}
+        </p>
       </div>
     </div>
   );

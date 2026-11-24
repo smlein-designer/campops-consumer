@@ -21,9 +21,9 @@ const provider = (id: string, name: string, latitude: number, longitude: number)
 
 export const PROVIDERS: Provider[] = [
   // Hill Country (around Pine Hollow)
-  provider("lakeshore-marina", "Lakeshore Marina", 30.2672, -98.9211),
-  provider("hill-country-trail-rides", "Hill Country Trail Rides", 30.26, -98.93),
-  provider("granite-ridge-outfitters", "Granite Ridge Outfitters", 30.275, -98.915),
+  provider("lakeshore-marina", "Lakeshore Marina", 30.2952, -98.8961),
+  provider("hill-country-trail-rides", "Hill Country Trail Rides", 30.2272, -98.9411),
+  provider("granite-ridge-outfitters", "Granite Ridge Outfitters", 30.2172, -98.7711),
   provider("pedernales-falls-guides", "Pedernales Falls Guides", 30.3072, -98.2578),
   provider("guadalupe-river-outfitters", "Guadalupe River Outfitters", 29.8833, -98.3936),
   // Austin

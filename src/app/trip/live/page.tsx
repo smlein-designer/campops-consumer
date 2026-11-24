@@ -87,7 +87,6 @@ import { PermissionRow } from "@/components/v3/permission-row";
 import { SelectField } from "@/components/v3/select-field";
 import {
   bookingCardTitle,
-  bookingKindAndTime,
   bookingWhen,
   tripFactChips,
   tripTitle,
@@ -102,7 +101,8 @@ import { campsiteById, openCampsites, partySize, searchCampsites, searchOne, tri
 import { siteDetails } from "@/lib/v3/site-details";
 import { activityQuote, maxPeople } from "@/lib/v3/activity-choice";
 import { ActivityChoice } from "@/components/v3/activity-choice";
-import { dayHeading, spokenTime } from "@/lib/v3/trip-dates";
+import { cardTime, dayHeading, spokenTime, weekdayName } from "@/lib/v3/trip-dates";
+import { estimatedTravelTimeHours } from "@/lib/geo";
 import { CampsiteDetails } from "@/components/v3/campsite-details";
 import { isoSpanLabel } from "@/lib/v3/trip-dates";
 import type { ActivityParty, ActivitySlot, CampsiteFitCard, Trip, TripEventKind } from "@/lib/v3/schemas";
@@ -1217,18 +1217,33 @@ function LiveTripPlan() {
   const pendingSteps = trip.plan.filter((s) => s.status !== "done");
   const mapPoints: MapPoint[] = site
     ? [
-        { id: "site", lat: site.latitude, lng: site.longitude, status: "base", place: campsiteTitle(site), detail: "Base camp" },
+        {
+          id: "site",
+          lat: site.latitude,
+          lng: site.longitude,
+          status: "base",
+          place: campsiteTitle(site),
+          detail: range ? `${weekdayName(range.startISO).slice(0, 3)} to ${weekdayName(range.endISO).slice(0, 3)} · base camp` : "Base camp",
+        },
         ...active
           .filter((b) => b.kind === "activity")
           .map((b): MapPoint => {
-            const provider = providerForActivity(ACTIVITIES_BY_ID[b.refId]);
+            const activity = ACTIVITIES_BY_ID[b.refId];
+            const provider = providerForActivity(activity);
+            const minutes = Math.max(
+              1,
+              Math.round(estimatedTravelTimeHours({ lat: site.latitude, lng: site.longitude }, { lat: provider.latitude, lng: provider.longitude }) * 60),
+            );
+            const when = b.time ? `${weekdayName(b.day).slice(0, 3)} ${cardTime(b.time).split(" to ")[0]}` : weekdayName(b.day).slice(0, 3);
             return {
               id: b.id,
               lat: provider.latitude,
               lng: provider.longitude,
               status: b.status === "changed_needs_ok" ? "needsOk" : "held",
               place: provider.name,
-              detail: bookingKindAndTime(b),
+              detail: `${when} · ${minutes} min`,
+              minutes,
+              kind: activity.requiresWaterAccess ? "water" : activity.type === "guided_hike" ? "hike" : undefined,
             };
           }),
       ]
@@ -1354,6 +1369,7 @@ function LiveTripPlan() {
           view={itineraryView}
           onViewChange={setItineraryView}
           mapPoints={mapPoints}
+          mapWater={site?.waterAccess.nearby ? site.waterAccess.type : undefined}
         />
       )}
 
