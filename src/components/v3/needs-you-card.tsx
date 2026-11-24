@@ -17,10 +17,10 @@ export function NeedsYouCard({
   secondary?: { label: string; onClick?: () => void };
 }) {
   return (
-    <div className="flex flex-col items-start gap-3 rounded-xl bg-[var(--color-bg-attention)] p-4">
+    <div className="flex flex-col items-start gap-3 rounded-xl border border-[var(--color-border-attention)] bg-[var(--color-bg-attention)] p-4">
       <p className="text-overline text-[var(--color-text-attention)]">{eyebrow}</p>
       <p className="text-body-m text-[var(--color-text-primary)]">{message}</p>
-      <div className="flex w-full gap-2">
+      <div className="flex w-full flex-wrap gap-2">
         <Button className="flex-1" variant="primary" label={primary.label} onClick={primary.onClick} />
         {secondary && <Button className="flex-1" variant="secondary" label={secondary.label} onClick={secondary.onClick} />}
       </div>

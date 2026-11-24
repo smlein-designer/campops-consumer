@@ -48,3 +48,32 @@ export const ACTIVITY_TYPE_LABEL: Record<ActivityType, string> = {
   guided_hike: "Guided hike",
   kayak: "Kayaking",
 };
+
+/** Plan-step wording per activity type: the step's title, what it depends
+ * on while it waits, and how to name it mid-sentence. */
+export const ACTIVITY_STEP: Record<ActivityType, { label: string; pending: string; noun: string; working: string }> = {
+  boat: {
+    label: "Add a boat near the site",
+    pending: "Only if the site is on the water",
+    noun: "a boat",
+    working: "checking boat times",
+  },
+  kayak: {
+    label: "Add kayaks near the site",
+    pending: "Only if the site is on the water",
+    noun: "kayaks",
+    working: "checking kayak times",
+  },
+  horseback: {
+    label: "Book a trail ride",
+    pending: "If a stable is near the site",
+    noun: "a trail ride",
+    working: "checking ride times",
+  },
+  guided_hike: {
+    label: "Find a hiking guide",
+    pending: "If a guide works near the site",
+    noun: "a guided hike",
+    working: "comparing guides",
+  },
+};

@@ -65,7 +65,7 @@ export function LandingHero({
             }}
             placeholder={PLACEHOLDER_EXAMPLE}
             rows={2}
-            className="w-full resize-none bg-transparent text-body-l text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)] disabled:opacity-60"
+            className="w-full resize-none bg-transparent text-body-l text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)] focus:placeholder:text-transparent disabled:opacity-60"
           />
           <div className="flex items-center justify-between gap-4">
             <p className="text-body-s text-[var(--color-text-secondary)]">

@@ -8,6 +8,7 @@ export function TopNav({
   chargeStatus,
   showChargeStatus = true,
   onNavigate,
+  onLogoClick,
 }: {
   theme?: "default" | "onPhoto";
   active: "Trips" | "Activity" | "Permissions";
@@ -16,24 +17,31 @@ export function TopNav({
   /** Real in-app navigation (the live page only) — omitted elsewhere, where
    * these items stay plain text (Figma-comparison static screens). */
   onNavigate?: (item: "Trips" | "Activity" | "Permissions") => void;
+  /** Starts a new trip (v2: the logo always led back to a fresh search). */
+  onLogoClick?: () => void;
 }) {
   const items = ["Trips", "Activity", "Permissions"] as const;
   const isOnPhoto = theme === "onPhoto";
   return (
     <nav
       className={cn(
-        "flex h-16 items-center justify-between px-8",
-        !isOnPhoto && "border-b border-[var(--color-border-default)]",
+        "flex h-16 items-center justify-between px-4 md:px-8",
+        // Stays at the top while the page scrolls under it.
+        !isOnPhoto && "sticky top-0 z-30 border-b border-[var(--color-border-default)] bg-[var(--color-bg-canvas)]",
       )}
     >
-      <div className="flex items-center gap-10">
-        <span
-          className="text-heading-s"
+      <div className="flex items-center gap-4 md:gap-10">
+        <button
+          type="button"
+          onClick={onLogoClick}
+          disabled={!onLogoClick}
+          aria-label={onLogoClick ? "campops — start a new trip" : "campops"}
+          className={cn("text-heading-s", onLogoClick && "cursor-pointer")}
           style={{ color: isOnPhoto ? "white" : "var(--color-text-link)" }}
         >
           campops
-        </span>
-        <div className="flex gap-7">
+        </button>
+        <div className="flex gap-4 md:gap-7">
           {items.map((item) => {
             const color = isOnPhoto
               ? item === active
@@ -60,7 +68,8 @@ export function TopNav({
           })}
         </div>
       </div>
-      <div className="flex items-center gap-4">
+      {/* The phone layout has room for the nav itself, not its extras. */}
+      <div className="hidden items-center gap-4 sm:flex">
         {showChargeStatus && (
           <span
             className="text-body-s whitespace-nowrap"

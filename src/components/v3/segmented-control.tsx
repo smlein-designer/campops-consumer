@@ -19,7 +19,7 @@ export function SegmentedControl({
           type="button"
           onClick={() => onChange?.(option)}
           className={cn(
-            "rounded-md px-3 py-1.5 text-label-m transition-colors",
+            "cursor-pointer rounded-md px-3 py-1.5 text-label-m whitespace-nowrap transition-colors",
             option === selected
               ? "bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] shadow-sm"
               : "text-[var(--color-text-secondary)]",

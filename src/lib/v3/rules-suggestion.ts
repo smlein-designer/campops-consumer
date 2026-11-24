@@ -1,62 +1,69 @@
 import type { Campsite } from "@/lib/schemas";
-import { addOnsNear } from "@/lib/v3/add-ons";
-import { ACTIVITIES, activitiesNear, providerForActivity } from "@/lib/v3/providers";
+import { ADD_ONS, addOnsNear } from "@/lib/v3/add-ons";
+import { ACTIVITIES, ACTIVITIES_BY_ID, activitiesNear, distanceFromCampsiteMiles, providerForActivity } from "@/lib/v3/providers";
 import type { Activity, Permission, Suggestion } from "@/lib/v3/schemas";
 
 /**
- * Suggestion rules (Build Brief §10, PRD v3 §9): only items at or near the
- * chosen campsite; at most one; never while a decision is pending (never in
- * the Needs You slot, never mid-decision); a dismissed item is never offered
- * again this trip; off entirely when the permission is off. An activity is
- * tried first (it pairs with the trip's requested activities); a campground
- * add-on fills in when no activity is left to suggest — PRD v3 §10 lists
- * add-ons as part of minimum viable data, not just activities.
+ * Suggestion rules (Build Brief §10, PRD v3 §9): only something this
+ * campsite really offers; at most one; never while a decision is pending; a
+ * dismissed kind is never offered again this trip; off entirely when the
+ * permission is off. A nearby activity is tried first, then a campground
+ * add-on. Every suggestion carries a one-line reason tied to the trip.
  */
 export function suggestionFor({
   campsite,
   dismissedTypes,
   permissions,
   hasPendingDecision,
-  bookedActivityIds = [],
+  bookedIds = [],
   activities = ACTIVITIES,
 }: {
   campsite: Campsite;
   dismissedTypes: string[];
   permissions: Permission[];
   hasPendingDecision: boolean;
-  /** Activities already part of the plan — never re-suggested (Build Brief §10 "an optional EXTRA"). */
-  bookedActivityIds?: string[];
+  /** Activity and add-on ids already in the plan — an extra is never a repeat. */
+  bookedIds?: string[];
   activities?: Activity[];
 }): Suggestion | null {
   if (hasPendingDecision) return null;
+  if (!permissions.find((p) => p.id === "suggest_extras")?.enabled) return null;
 
-  const permission = permissions.find((p) => p.id === "suggest_extras");
-  if (!permission?.enabled) return null;
-
-  const activityCandidate = activitiesNear(campsite, activities).find(
-    (a) => !dismissedTypes.includes(a.type) && !bookedActivityIds.includes(a.id),
+  // Kinds of thing already in the plan: a held activity, or an add-on that
+  // stands in for one (the campground's kayak rental is kayaking too).
+  const bookedTypes = bookedIds.map((id) => ACTIVITIES_BY_ID[id]?.type ?? ADD_ONS.find((a) => a.id === id)?.coversActivity);
+  const activity = activitiesNear(campsite, activities).find(
+    (a) => !dismissedTypes.includes(a.type) && !bookedTypes.includes(a.type),
   );
-  if (activityCandidate) {
-    const provider = providerForActivity(activityCandidate);
+  if (activity) {
+    const provider = providerForActivity(activity);
+    const miles = distanceFromCampsiteMiles(activity, campsite);
+    const where = miles <= 1 ? "right by the site" : `${miles} miles from the site`;
     return {
-      id: `suggestion-${activityCandidate.id}`,
-      target: { kind: "activity", id: activityCandidate.id },
-      reason: "Pairs well with your site.",
+      id: `suggestion-${activity.id}`,
+      target: { kind: "activity", id: activity.id },
+      reason: activity.requiresWaterAccess
+        ? `${campsite.campgroundName} is on the water, and ${provider.name} is ${where}.`
+        : `${provider.name} is ${where}.`,
       source: `Offered by ${provider.name}`,
       state: "offered",
     };
   }
 
-  const addOnCandidate = addOnsNear(campsite.campgroundName).find((a) => !dismissedTypes.includes(a.id));
-  if (addOnCandidate) {
+  const addOn = addOnsNear(campsite).find(
+    (a) =>
+      !dismissedTypes.includes(a.id) &&
+      !bookedIds.includes(a.id) &&
+      !(a.coversActivity && (bookedTypes.includes(a.coversActivity) || dismissedTypes.includes(a.coversActivity))),
+  );
+  if (addOn) {
     return {
-      id: `suggestion-${addOnCandidate.id}`,
-      target: { kind: "addon", id: addOnCandidate.id },
-      reason: `Pairs well with your stay at ${campsite.campgroundName}.`,
-      source: `Offered by ${addOnCandidate.campgroundName}`,
+      id: `suggestion-${addOn.id}`,
+      target: { kind: "addon", id: addOn.id },
+      reason: `${campsite.campgroundName} sells it at the camp store, ready when you arrive.`,
+      source: `Offered by ${campsite.campgroundName}`,
       state: "offered",
     };
   }
-
   return null;
 }

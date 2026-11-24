@@ -15,7 +15,6 @@ export default function StartAfterFirstMessagePage() {
   return (
     <TripShell
       chargeStatus="Nothing held or charged yet"
-      railWide
       composerPlaceholder="Reply or add anything"
       hero={
         <TripHero

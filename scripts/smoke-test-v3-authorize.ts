@@ -3,7 +3,7 @@
  * stage 8 / Definition of Done check: "no path reaches approved without
  * the commit action."
  */
-import { applyTurn } from "../src/lib/v3/agent-loop";
+import { applyTurn, defaultActivityChoice, holdActivityChoice, holdSpecificCampsite } from "../src/lib/v3/agent-loop";
 import { emptyTrip } from "../src/lib/v3/trip-factory";
 import { commitBooking, removeBooking, reverifyHolds } from "../src/lib/v3/authorize";
 import type { V3IntentExtraction } from "../src/lib/v3/intent-schema";
@@ -29,25 +29,39 @@ const now = Date.now();
 const goldenPathExtraction: V3IntentExtraction = {
   checkIn: "Apr 16",
   checkOut: "Apr 18",
+  dateHint: null,
   adults: 4,
+  children: null,
   pets: 1,
-  originZip: null,
-  driveLimitHours: null,
-  budgetUsd: null,
+  destination: null,
+  origin: "Austin",
+  driveLimitHours: 2,
+  budgetTotalUsd: 800,
+  budgetPerNightUsd: null,
   requirements: [
-    { label: "Waterfront", tier: "must" },
-    { label: "Dogs OK", tier: "must" },
-    { label: "Trail ride", tier: "nice" },
-    { label: "Pontoon", tier: "nice" },
+    { label: "On the water", tier: "nice" },
+    { label: "Boat rental", tier: "nice" },
+    { label: "Beginner trail ride", tier: "nice" },
     { label: "Guided hike", tier: "nice" },
   ],
   status: "actionable",
   clarificationQuestion: null,
+  clarificationOptions: null,
   unsupportedReason: null,
+  candidateQuestion: null,
 };
 
+/** The golden path, with each activity's first open time taken for everyone. */
 function goldenPathTrip() {
-  return applyTurn(emptyTrip(), goldenPathExtraction, now).trip;
+  let trip = applyTurn(emptyTrip(), goldenPathExtraction, now).trip;
+  // The traveler picks the recommended campsite.
+  const pick = trip.needsYouQueue[0];
+  if (pick?.kind === "campsite_choice") trip = holdSpecificCampsite(trip, pick.payload!.campsiteId!, now).trip;
+  for (let item = trip.needsYouQueue[0]; item?.kind === "activity_choice"; item = trip.needsYouQueue[0]) {
+    const choice = defaultActivityChoice(trip, item.payload!.activityId)!;
+    trip = holdActivityChoice(trip, item.id, choice.slot, choice.party, now).trip;
+  }
+  return trip;
 }
 
 run("Removing the campsite removes every activity that depends on it", () => {

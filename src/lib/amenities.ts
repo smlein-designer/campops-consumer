@@ -98,6 +98,10 @@ const AMENITY_ALIASES: Record<string, AmenityCode> = {
   fishing: "fishing_pier",
   sauna: "sauna",
   stargazing: "stargazing",
+  "dark sky": "stargazing",
+  "dark skies": "stargazing",
+  "night sky": "stargazing",
+  "milky way": "stargazing",
   tubing: "tubing_access",
   "tubing access": "tubing_access",
 };

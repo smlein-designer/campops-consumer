@@ -1,112 +1,115 @@
-import { computeDateRange, normalizeDatePhrase } from "@/lib/dates";
 import { parsePartySizeAnswer } from "@/lib/prerequisites";
-import type { PrerequisiteKind, V3TripIntent } from "@/lib/v3/schemas";
+import { newId } from "@/lib/id";
+import { originZip, partySize, tripRange } from "@/lib/v3/search";
+import { monthName, weekendOptions } from "@/lib/v3/trip-dates";
+import type { HoldBlocker, PendingClarifyingQuestion, V3TripIntent } from "@/lib/v3/schemas";
 
 /**
- * Deterministic conversational gates, ported from v2 (src/lib/prerequisites.ts,
- * src/lib/recommendation-readiness.ts) and adapted to v3's simpler
- * must/nice TripIntent. These are distinct from the model's own
- * needs_clarification judgment (Build Brief standing rule: "objectively
- * required action prerequisites are deterministic application rules, not
- * probabilistic model judgments") — GPT phrases requirement labels, but
- * never decides whether a date or a party size is missing.
+ * What CampOps still needs from the user, decided by the application from
+ * the trip's own facts — never by the model (v2's standing rule: required
+ * facts are application rules, not model judgments).
+ *
+ * A missing fact never hides the plan: CampOps always shows what it heard
+ * and its plan, and narrows the rest down in the chat. But it doesn't show
+ * a specific site until it has v2's minimum for one (`recommendBlockers`),
+ * and doesn't hold one until it has everything a hold needs (`holdBlockers`).
  */
 
 export { parsePartySizeAnswer };
 
-export type PrerequisiteCheckResult =
-  | { status: "actionable" }
-  | { status: "missing_prerequisites"; missing: PrerequisiteKind[] };
-
-function hasResolvableDateRange(intent: V3TripIntent): boolean {
-  if (!intent.checkIn || !intent.checkOut) return false;
-  return computeDateRange(intent.checkIn, intent.checkOut) !== null;
+/** v2's recommendation-readiness gate: nothing at all to choose a site by. */
+function nothingToGoOn(intent: V3TripIntent): boolean {
+  return (
+    partySize(intent) < 1 &&
+    intent.requirements.length === 0 &&
+    !intent.destination &&
+    !intent.origin &&
+    intent.pets === 0 &&
+    intent.children === 0 &&
+    intent.budgetTotalUsd == null &&
+    intent.budgetPerNightUsd == null
+  );
 }
 
 /**
- * Everything a held booking objectively needs apart from payment: real
- * resolvable dates, and a party size. Checked regardless of what the model's
- * own status says — an objectively missing field is an application fact.
+ * What's missing before CampOps may show a specific site, in the order it
+ * is asked. A request for a stay needs somewhere to look (an area or a
+ * starting point), real dates and how many are coming — a site shown
+ * without them would imply it's close, free and big enough when nobody has
+ * said — plus the starting point when a drive limit depends on it. A
+ * browsing question ("what are some quiet campgrounds?") needs a place
+ * instead (v2's exploratory mode).
  */
-export function checkTripPrerequisites(intent: V3TripIntent): PrerequisiteCheckResult {
-  const missing: PrerequisiteKind[] = [];
-  if (!hasResolvableDateRange(intent)) {
-    if (!intent.checkIn) missing.push("check_in_date");
-    if (!intent.checkOut) missing.push("check_out_date");
-    if (intent.checkIn && intent.checkOut) missing.push("check_in_date", "check_out_date");
+export function recommendBlockers(intent: V3TripIntent, browsing: boolean): HoldBlocker[] {
+  const blockers: HoldBlocker[] = [];
+  if (nothingToGoOn(intent)) blockers.push("more_detail");
+  if (browsing) {
+    if (!intent.destination && !intent.origin) blockers.push("destination");
+    return blockers;
   }
-  if (!intent.adults || intent.adults < 1) missing.push("party_size");
-  return missing.length > 0
-    ? { status: "missing_prerequisites", missing: Array.from(new Set(missing)) }
-    : { status: "actionable" };
+  // Where: an area, or a starting point to keep it close to. Without either,
+  // "best" across the whole state could be a day's drive away.
+  // A drive limit needs the starting point itself, which answers "where" too.
+  if (intent.driveLimitHours != null && !originZip(intent)) blockers.push("origin");
+  else if (!intent.destination && !intent.origin) blockers.push("destination");
+  if (!tripRange(intent)) blockers.push("dates");
+  if (partySize(intent) < 1) blockers.push("party_size");
+  return blockers;
 }
 
-const DATE_QUESTION = "What dates are you planning to camp?";
-const DATE_FOLLOWUP_QUESTION =
-  'I couldn\'t quite pin down exact dates from that — could you give me a specific check-in and check-out (e.g. "Apr 16 to Apr 18"), or a recognized phrase like "Labor Day weekend" or "this weekend"?';
-const PARTY_SIZE_QUESTION = "How many people are camping?";
+/** Everything still missing before a hold is possible — the same minimum. */
+export function holdBlockers(intent: V3TripIntent): HoldBlocker[] {
+  return recommendBlockers(intent, false);
+}
+
+const QUESTIONS: Record<Exclude<HoldBlocker, "dates">, string> = {
+  more_detail:
+    "Tell me a bit more so I can pick well: where you'd like to be, who's coming, or what matters most (on the water, quiet, dog-friendly, and so on).",
+  destination: "Where should I look? Name an area, or tell me where you're driving from and I'll keep it close.",
+  party_size: "How many people are coming?",
+  origin: "Where will you be driving from? A city or ZIP is fine.",
+};
 
 /**
- * Deterministic, factual question text for a missing-prerequisite result —
- * never model-phrased. `dateAttempt` (ported from v2's loop-protection
- * follow-up): 0/1 use the normal date question; 2+ switches to a more
- * specific follow-up instead of repeating the same question verbatim.
+ * The question for one blocker — a plain line, plus a card with tappable
+ * answers when the answer is naturally a short list (weekends in a month).
+ * `dateAttempts` is v2's loop protection: a reply that looked like dates but
+ * didn't resolve gets a more specific ask, not the same question again.
  */
-export function questionFor(missing: PrerequisiteKind[], dateAttempt = 0): string {
-  const first = missing[0];
-  if (!first) return "Could you provide a bit more information?";
-  if (first === "check_in_date" || first === "check_out_date") {
-    return dateAttempt >= 2 ? DATE_FOLLOWUP_QUESTION : DATE_QUESTION;
+export function questionFor(
+  blocker: HoldBlocker,
+  intent: V3TripIntent,
+  dateAttempts = 0,
+): { question: string; card: PendingClarifyingQuestion | null } {
+  if (blocker !== "dates") return { question: QUESTIONS[blocker], card: null };
+
+  const options = weekendOptions(intent.dateHint);
+  if (options.length > 0) {
+    const question = `Which weekend in ${monthName(intent.dateHint)}?`;
+    const first = options[0];
+    return {
+      question,
+      card: {
+        id: newId(),
+        question,
+        options: [...options, { label: "Any of these", checkIn: first.checkIn, checkOut: first.checkOut }],
+        selected: first.label,
+        assumption: `I'm searching ${first.label} for now.`,
+      },
+    };
   }
-  return PARTY_SIZE_QUESTION;
+  return {
+    question:
+      dateAttempts >= 2
+        ? 'I couldn\'t pin down exact dates from that. Could you give me a check-in and check-out, like "Apr 16 to Apr 18", or a month?'
+        : "When are you thinking of going? Exact dates or just a month both work.",
+    card: null,
+  };
 }
 
 /**
- * Resolves a recognized relative/holiday date phrase (e.g. "Labor Day
- * weekend") in checkIn/checkOut into concrete dates before any prerequisite
- * is checked, so a recognized phrase is never treated as "still missing."
- * An unrecognized phrase is left exactly as the model returned it.
- */
-export function normalizeIntentDates(intent: V3TripIntent): { intent: V3TripIntent; normalized: boolean } {
-  const source = intent.checkIn || intent.checkOut;
-  if (!source) return { intent, normalized: false };
-  const resolved = normalizeDatePhrase(source);
-  if (!resolved) return { intent, normalized: false };
-  if (intent.checkIn === resolved.checkIn && intent.checkOut === resolved.checkOut) {
-    return { intent, normalized: false };
-  }
-  return { intent: { ...intent, checkIn: resolved.checkIn, checkOut: resolved.checkOut }, normalized: true };
-}
-
-export type ReadinessResult = { status: "ready" } | { status: "insufficient"; question: string };
-
-const READINESS_QUESTION =
-  "To recommend a specific site, tell me a bit more — a starting ZIP or how far you're willing to drive, or what matters most for the trip (quiet, pet-friendly, on the water, and so on).";
-
-/**
- * The third gate (ported from v2's recommendation-readiness.ts): even once
- * the model considers the request actionable and every prerequisite is met,
- * refuses to hand back a specific recommendation built from dates alone —
- * "Find me somewhere to camp" plus dates is not enough to explain a pick.
- * Party size is deliberately NOT a readiness signal here — v3's
- * checkTripPrerequisites already requires it before this gate ever runs
- * (unlike v2, where party size is a BOOKING prerequisite, not a search
- * one), so treating it as a readiness dimension too would make this gate
- * unreachable.
- */
-export function checkRecommendationReadiness(intent: V3TripIntent): ReadinessResult {
-  const hasTripCharacter = intent.requirements.length > 0;
-  const hasOrigin = !!intent.originZip || intent.driveLimitHours != null;
-  if (hasTripCharacter || hasOrigin) return { status: "ready" };
-  return { status: "insufficient", question: READINESS_QUESTION };
-}
-
-/**
- * Deterministic detector for "show me another option" / "I don't like this
- * site" (ported from v2's candidate-cycling intent, adapted to v3's
- * hold-first model — see requestAlternativeCampsite in agent-loop.ts).
- * Checked before the message is ever sent to the model, same priority as
- * v2's candidate-question detection.
+ * "Show me another option" / "I don't like this site" (v2's candidate
+ * cycling). Checked before the message reaches the model.
  */
 const ALTERNATIVE_REQUEST_PATTERN =
   /\b(another option|a different (site|campsite|campground|spot|place)|something else|don'?t like (this|it)|try again|somewhere else)\b/i;
@@ -115,16 +118,17 @@ export function isAlternativeRequestMessage(message: string): boolean {
   return ALTERNATIVE_REQUEST_PATTERN.test(message);
 }
 
+/** "What else is out there?" — asks to see the other options side by side. */
+const BROWSE_OPTIONS_PATTERN =
+  /\b(what else|(other|more|different) (\w+ )?(options|sites|campsites|campgrounds|choices)|alternatives|show me (the )?others|compare|see (the |some )?options)\b/i;
+
+export function isBrowseOptionsMessage(message: string): boolean {
+  return BROWSE_OPTIONS_PATTERN.test(message);
+}
+
 /**
- * Deterministic detector for an explicit, NAMED campsite switch ("Let's
- * switch to Prairie Flats", "Change to Cedar Point instead") — distinct
- * from isAlternativeRequestMessage, which only ever means "show me the
- * next ranked option," never a specific site the user already has in
- * mind. Checked before the message reaches the model, same priority as
- * the other deterministic detectors. Returns the matched campsite's id,
- * or null if the message isn't this kind of request or names no real
- * site. Among same-named campgrounds (several sites can share one), the
- * caller's own candidate list decides which one wins.
+ * An explicit, NAMED campsite switch ("Let's switch to Prairie Flats") —
+ * distinct from asking for the next ranked option.
  */
 const NAMED_SWITCH_PATTERN =
   /\b(switch (?:to|campsites? to)|let'?s (?:switch|go|do|try)|change (?:to|campsites? to)|i'?d rather (?:have|stay at|go with))\b/i;
@@ -136,4 +140,32 @@ export function isNamedCampsiteSwitchMessage(message: string): boolean {
 export function matchNamedCampsite<T extends { campgroundName: string }>(message: string, candidates: T[]): T | null {
   const lower = message.toLowerCase();
   return candidates.find((c) => lower.includes(c.campgroundName.toLowerCase())) ?? null;
+}
+
+const YES_PATTERN = /^(yes|yeah|yep|yup|sure|ok(ay)?|do it|go ahead|sounds good|please do|that works|fine|hold it|keep it|book it|let'?s do it)\b/;
+const NO_PATTERN = /^(no|nope|nah|don'?t|skip|let it go|pass|not now|never ?mind)\b|other (options|times)|something else|show (me )?(the )?other/;
+
+/**
+ * A chat reply that answers the open Needs You card, so the card and the chat
+ * stay one conversation: the card's own button words ("Keep Saturday", "Let
+ * it go") or a plain yes / no. Null when the message is about something else.
+ */
+export function needsYouAnswer(item: { primaryLabel: string; secondaryLabel?: string }, message: string): "primary" | "secondary" | null {
+  const m = message.trim().toLowerCase().replace(/[.!]+$/, "");
+  const plain = (label: string) => label.toLowerCase().replace(/[·$\d]+/g, " ").replace(/\s+/g, " ").trim();
+  if (item.secondaryLabel && m.includes(plain(item.secondaryLabel))) return "secondary";
+  if (plain(item.primaryLabel).length > 3 && m.includes(plain(item.primaryLabel))) return "primary";
+  if (NO_PATTERN.test(m)) return "secondary";
+  if (YES_PATTERN.test(m)) return "primary";
+  return null;
+}
+
+const RESUME_PATTERN =/^\s*(resume|continue|carry on|go ahead|keep going|unpause)\b/i;
+const PAUSE_PATTERN = /^\s*(pause|hold on|wait|stop for now|give me a (minute|sec|second))\b/i;
+
+/** Pausing and resuming by saying so (Figma "Paused": "Say resume, or tap Resume"). */
+export function pauseCommand(message: string): "pause" | "resume" | null {
+  if (RESUME_PATTERN.test(message)) return "resume";
+  if (PAUSE_PATTERN.test(message)) return "pause";
+  return null;
 }

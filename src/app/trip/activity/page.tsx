@@ -61,7 +61,7 @@ const LOG = [
 export default function ActivityPage() {
   return (
     <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
-      <div className="hidden border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)] md:block">
+      <div className="sticky top-0 z-30 hidden border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)] md:block">
         <TopNav active="Activity" chargeStatus="Nothing charged yet" />
       </div>
       <div className="md:hidden">

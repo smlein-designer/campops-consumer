@@ -47,6 +47,9 @@ export function BookingCard({
   showPhoto = false,
   photo,
   onRelease,
+  onDetails,
+  detailsLabel = "Details",
+  onCompare,
 }: {
   state: BookingCardState;
   kind: string;
@@ -58,6 +61,12 @@ export function BookingCard({
   showPhoto?: boolean;
   photo?: string;
   onRelease?: () => void;
+  /** Opens the full details for this item. */
+  onDetails?: () => void;
+  /** The link's wording: "Details" for a campsite, "Change" for an activity. */
+  detailsLabel?: string;
+  /** A held campsite: see the other sites that fit before booking. */
+  onCompare?: () => void;
 }) {
   const badge = defaultStatus[state];
   return (
@@ -69,27 +78,45 @@ export function BookingCard({
         />
       )}
       <div className="flex flex-col gap-1 px-4 pt-3 pb-4">
-        <p className="text-caption text-[var(--color-text-secondary)]">{kind}</p>
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-caption text-[var(--color-text-secondary)]">{kind}</p>
+          {onDetails && (
+            <button
+              type="button"
+              onClick={onDetails}
+              aria-label={`${detailsLabel} ${title}`}
+              className="shrink-0 cursor-pointer text-label-s text-[var(--color-text-link)] underline underline-offset-2"
+            >
+              {detailsLabel}
+            </button>
+          )}
+        </div>
         <p className="text-label-l text-[var(--color-text-primary)]">{title}</p>
         <p className="text-body-s text-[var(--color-text-secondary)]">{meta}</p>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1">
           <StatusBadge status={badge.status} label={statusLabel ?? badge.label} />
           {state === "held" && holdEndsAt && (
             <p
-              className="text-label-s text-[var(--color-text-held)]"
+              className="text-label-s text-[var(--color-text-held)] tabular-nums"
               aria-label={`Hold ends in ${formatCountdown(holdEndsAt)}`}
             >
               {formatCountdown(holdEndsAt)}
             </p>
           )}
-          {state === "held" && onRelease && (
-            <button
-              type="button"
-              onClick={onRelease}
-              className="text-label-s text-[var(--color-text-link)] underline-offset-2 hover:underline"
-            >
-              Release
-            </button>
+          {/* Pinned to the right edge, so the ticking countdown never moves them. */}
+          {state === "held" && (onCompare || onRelease) && (
+            <div className="ml-auto flex gap-4">
+              {onCompare && (
+                <button type="button" onClick={onCompare} className="cursor-pointer text-label-s text-[var(--color-text-link)] underline underline-offset-2">
+                  Compare sites
+                </button>
+              )}
+              {onRelease && (
+                <button type="button" onClick={onRelease} className="cursor-pointer text-label-s text-[var(--color-text-link)] underline underline-offset-2">
+                  Release
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>

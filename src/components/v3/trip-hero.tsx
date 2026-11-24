@@ -17,8 +17,8 @@ export function TripHero({
   return (
     <div
       className={cn(
-        "relative flex flex-col justify-end overflow-hidden px-8",
-        size === "large" ? "h-64 pb-7" : "h-[180px] pb-[22px]",
+        "relative flex flex-col justify-end overflow-hidden px-4 md:px-8",
+        size === "large" ? "min-h-[220px] pt-12 pb-5 md:h-64 md:pb-7" : "min-h-[150px] pt-10 pb-4 md:h-[180px] md:pb-[22px]",
       )}
       style={
         photo
@@ -31,7 +31,7 @@ export function TripHero({
       }
     >
       <p className="text-overline text-[#edebe0]">{status}</p>
-      <p className={cn(size === "large" ? "text-display-l" : "text-heading-l", "text-white")}>{title}</p>
+      <p className={cn(size === "large" ? "text-heading-l md:text-display-l" : "text-heading-m md:text-heading-l", "text-white")}>{title}</p>
       {size === "large" && facts && facts.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {facts.map((fact) => (

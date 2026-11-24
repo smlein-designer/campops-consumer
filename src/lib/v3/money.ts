@@ -1,13 +1,19 @@
 import type { Activity, Booking } from "@/lib/v3/schemas";
 
 /**
- * Resolves an activity's booking price for a given party size. "per_person"
- * multiplies by the party; "per_group"/"per_boat" are already flat totals
- * (Build Brief §5 — pontoon $180 flat, guide $34 group rate for 4, trail
- * ride $65/rider).
+ * How many boats, kayaks or guided groups a party needs: a flat-priced unit
+ * holds `capacity` people (kayaks for two, a pontoon for eight).
+ */
+export function activityUnits(activity: Activity, people: number): number {
+  return activity.pricingBasis === "per_person" ? people : Math.max(1, Math.ceil(people / activity.capacity));
+}
+
+/**
+ * Resolves an activity's booking price for a given party size (Build Brief
+ * §5 — pontoon $180 a boat, guide $34 a group, trail ride $65 a rider).
  */
 export function activityBookingPrice(activity: Activity, partySize: number): number {
-  return activity.pricingBasis === "per_person" ? activity.price * partySize : activity.price;
+  return activity.price * activityUnits(activity, partySize);
 }
 
 /** Totals are always computed, never typed (Build Brief §5, §7). */

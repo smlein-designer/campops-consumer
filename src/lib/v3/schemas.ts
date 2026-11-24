@@ -23,14 +23,28 @@ export type TripRequirement = {
   changed: boolean;
 };
 
+/**
+ * What the user asked for. Empty string / 0 / null mean "not said yet" —
+ * nothing here is ever filled in with a guess.
+ */
 export type V3TripIntent = {
-  checkIn: string; // ISO date
-  checkOut: string; // ISO date
+  /** As stated, e.g. "Apr 16". */
+  checkIn: string;
+  checkOut: string;
+  /** A loose timeframe when exact dates aren't known yet, e.g. "April". */
+  dateHint: string;
   adults: number;
+  children: number;
   pets: number;
-  originZip: string;
+  /** Where they want to camp, e.g. "Hill Country". */
+  destination: string;
+  /** Where they start from: a ZIP or a city name, e.g. "Austin". */
+  origin: string;
   driveLimitHours: number | null;
-  budgetUsd: number | null;
+  /** Spending limit across every booking in the trip. */
+  budgetTotalUsd: number | null;
+  /** Campsite nightly-rate limit. */
+  budgetPerNightUsd: number | null;
   requirements: TripRequirement[];
 };
 
@@ -41,10 +55,8 @@ export type ActivityType = "boat" | "horseback" | "guided_hike" | "kayak";
 export type Provider = {
   id: string;
   name: string;
-  type: ActivityType;
   latitude: number;
   longitude: number;
-  photoKey?: string;
 };
 
 export type PricingBasis = "per_person" | "per_group" | "per_boat";
@@ -53,8 +65,14 @@ export type ActivitySlot = {
   date: string; // ISO date
   startTime: string; // "HH:MM", 24h
   endTime: string; // "HH:MM", 24h
-  capacityRemaining: number;
 };
+
+/** Who from the trip is going on one activity. */
+export type ActivityParty = { adults: number; children: number };
+
+/** A time of day an activity runs. `days` limits it to the arrival or last
+ * day of a trip (an evening cruise on arrival, a short slot after checkout). */
+export type ActivityWindow = { startTime: string; endTime: string; days?: "arrival" | "last" };
 
 /**
  * ACTIVITY — a bookable experience in a time slot (Build Brief §6). Price is
@@ -66,7 +84,13 @@ export type Activity = {
   providerId: string;
   type: ActivityType;
   name: string;
-  slots: ActivitySlot[];
+  /** Short category shown on cards, e.g. "Pontoon". */
+  category: string;
+  /** Times it runs each day, in preference order. Real slots come from
+   * `activitySlots` against the trip's own dates. */
+  windows: ActivityWindow[];
+  /** Which day of the trip to try first. */
+  preferredDay: "first_full" | "last";
   capacity: number;
   price: number;
   pricingBasis: PricingBasis;
@@ -74,7 +98,6 @@ export type Activity = {
   refundTerms: string;
   refundCutoffHoursBefore: number;
   requiresWaterAccess: boolean;
-  requiresTrailhead: boolean;
   skillLevel: "beginner" | "intermediate" | "advanced";
   photoKey?: string;
 };
@@ -83,11 +106,15 @@ export type Activity = {
 
 export type AddOn = {
   id: string;
-  campgroundName: string;
   name: string;
   price: number;
   unit: string; // "bundle" | "each" | "bag" | "night"
   refundTerms: string;
+  /** Only sold at campgrounds on the water. */
+  requiresWaterAccess?: boolean;
+  /** The activity it stands in for (a campground kayak rental is kayaking),
+   * so the two are never both offered or booked. */
+  coversActivity?: ActivityType;
 };
 
 // ---- Condition (Build Brief §6, §11) -------------------------------------
@@ -178,8 +205,19 @@ export type Booking = {
   /** Campsite id / Activity id / AddOn id. */
   refId: string;
   title: string;
-  day: string; // display date, e.g. "Apr 16-18" or "Sun"
-  time?: string; // slot text, activities only
+  /** Card overline, e.g. "Campsite · 2 nights" or "Pontoon". */
+  category: string;
+  /** The business behind it, activities only. */
+  provider?: string;
+  /** Card meta line, e.g. "Up to 8 people". */
+  meta: string;
+  photoKey?: string;
+  day: string; // ISO date (a campsite's check-in day)
+  time?: string; // "HH:MM-HH:MM", activities only
+  /** Who's going, activities only — the user's own pick, not the whole trip. */
+  party?: ActivityParty;
+  /** Where it was before a proposed move — kept until the user decides. */
+  movedFrom?: { day: string; time: string };
   price: number;
   refundTerms: string;
   /** Other booking ids this one depends on (e.g. an activity depends on its campsite). */
@@ -234,7 +272,16 @@ export type AgentState = {
 
 /** `kind`/`payload` let the UI route a button click to the right resolver
  * (src/lib/v3/scripted-events.ts) without string-matching the copy. */
-export type NeedsYouKind = "forecast_move" | "hold_expired" | "campsite_unavailable" | "no_match";
+export type NeedsYouKind =
+  | "forecast_move"
+  | "hold_expired"
+  | "campsite_unavailable"
+  | "no_match"
+  | "hold_ask"
+  /** An activity the user picks a time and party for before it is held. */
+  | "activity_choice"
+  /** The top campsites, for the user to pick one before anything is held. */
+  | "campsite_choice";
 
 export type NeedsYouItem = {
   id: string;
@@ -253,10 +300,26 @@ export type ThreadMessage = { id: string; from: "user" | "agent"; message: strin
 /** An inline multiple-choice question in the thread (the ClarifyingQuestion
  * component) — the model's own needs_clarification question, shown with
  * quick replies when it supplied any (ported from v2's quickReplies pattern). */
+export type ClarifyingOption = {
+  label: string;
+  checkIn?: string;
+  checkOut?: string;
+  /** Tapping it makes this must-have optional, to see more sites. */
+  relaxRequirementId?: string;
+  /** Tapping it drops the drive-time limit, to see more sites. */
+  dropDriveLimit?: boolean;
+  /** Tapping it offers this nearby activity's times. */
+  activityId?: string;
+};
+
 export type PendingClarifyingQuestion = {
   id: string;
   question: string;
-  options: string[];
+  options: ClarifyingOption[];
+  /** The option CampOps is working with while it waits. */
+  selected?: string;
+  /** What it is assuming meanwhile, e.g. "I'm searching Apr 16 to 18 for now." */
+  assumption?: string;
 };
 
 /** One side of a campsite comparison (CampsiteOption component) — the
@@ -264,6 +327,8 @@ export type PendingClarifyingQuestion = {
  * recommendation ("which requirements are kept, which are traded off...
  * must name any must-have that is missed"). */
 export type CampsiteFitCard = {
+  campsiteId: string;
+  photoKey?: string;
   eyebrow: string;
   title: string;
   facts: string[];
@@ -281,19 +346,21 @@ export type CampsiteComparison = {
   id: string;
   lost?: CampsiteFitCard;
   recommended: CampsiteFitCard;
+  /** The next-best sites shown beside it, when the user is choosing. */
+  options?: CampsiteFitCard[];
 };
 
 // ---- Deterministic gates (ported from v2's prerequisite/readiness gates) --
 
-export type PrerequisiteKind = "check_in_date" | "check_out_date" | "party_size";
+/** What CampOps still needs before it can hold anything — an objective fact
+ * about the trip, never the model's call (v2's prerequisite gates). */
+export type HoldBlocker = "more_detail" | "destination" | "dates" | "party_size" | "origin";
 
-/** Tracks an outstanding deterministic prerequisite ask across turns — the
- * SAME distinction v2 draws between the model's own semantic judgment
- * (needs_clarification) and an objectively missing structured field. */
-export type PendingPrerequisite = {
-  missing: PrerequisiteKind[];
-  /** Loop-protection counter: consecutive turns that looked like a date
-   * attempt but still didn't resolve (ported from v2's dateAskAttempts). */
+/** The one question currently open in the chat. */
+export type PendingAsk = {
+  kind: HoldBlocker;
+  /** Consecutive replies that looked like dates but didn't resolve (v2's
+   * loop protection). */
   dateAskAttempts: number;
 };
 
@@ -340,14 +407,19 @@ export type Trip = {
   conditions: Condition[];
   events: TripEvent[];
   authorization: Authorization;
-  /** Outstanding deterministic prerequisite ask (dates, party size), or null. */
-  pendingPrerequisite: PendingPrerequisite | null;
-  /** True while the app's own recommendation-readiness gate is waiting on
-   * the user (ported from v2's pendingRecommendationReadiness). */
-  pendingReadiness: boolean;
-  /** The model's own needs_clarification question, rendered as a
-   * ClarifyingQuestion card with quick replies — cleared once answered. */
+  /** The question currently open in the chat, or null. */
+  pendingAsk: PendingAsk | null;
+  /** That question as a card with tappable answers, when it has any. */
   clarifyingQuestion: PendingClarifyingQuestion | null;
+  /** Campsites an outside change took away — never searched again this trip. */
+  unavailableCampsiteIds: string[];
+  /** The trip started as a browsing question ("what are some quiet
+   * campgrounds?") rather than a request for a stay — v2's exploratory mode,
+   * where a site can be shown before there are dates. */
+  browsing: boolean;
+  /** Chips the user just changed, shown as "updated" until CampOps has
+   * re-checked the plan against them (fact keys or requirement ids). */
+  changedChips: string[];
   /** Which ranked candidate from the last campsite search is active — lets
    * the user cycle through alternatives (ported from v2's candidateIndex). */
   candidateIndex: number;

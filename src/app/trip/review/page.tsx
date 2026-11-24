@@ -17,7 +17,7 @@ export default function ReviewAndApprovePage() {
   const total = tripTotal(GOLDEN_PATH_BOOKINGS);
   return (
     <div className="min-h-dvh bg-[var(--color-bg-canvas)]">
-      <div className="border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+      <div className="sticky top-0 z-30 border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
         <TopNav active="Trips" chargeStatus="Nothing charged yet" />
       </div>
       <div className="mx-auto max-w-2xl space-y-6 p-6 md:p-10">

@@ -1,4 +1,8 @@
+import { Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const iconButton =
+  "flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]";
 
 export function ReviewLineItem({
   title,
@@ -7,6 +11,7 @@ export function ReviewLineItem({
   flag,
   tags,
   amount,
+  onEdit,
   onRemove,
   variant = "desktop",
 }: {
@@ -18,6 +23,8 @@ export function ReviewLineItem({
    * "Waterfront", "Dogs OK" — why this item was chosen, not just what it is. */
   tags?: string[];
   amount: string;
+  /** Back to planning this item: a campsite's details, or an activity's time and group. */
+  onEdit?: () => void;
   onRemove?: () => void;
   variant?: "desktop" | "mobile";
 }) {
@@ -41,14 +48,19 @@ export function ReviewLineItem({
       </div>
       <div className={cn("flex shrink-0 items-start gap-3", variant === "mobile" && "justify-between")}>
         <p className="text-price-l text-[var(--color-text-primary)]">{amount}</p>
-        {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="text-label-s text-[var(--color-text-link)] hover:underline"
-          >
-            Remove
-          </button>
+        {(onEdit || onRemove) && (
+          <div className="flex gap-1">
+            {onEdit && (
+              <button type="button" onClick={onEdit} aria-label={`Change ${title}`} title="Change" className={iconButton}>
+                <Pencil size={18} aria-hidden />
+              </button>
+            )}
+            {onRemove && (
+              <button type="button" onClick={onRemove} aria-label={`Remove ${title}`} title="Remove" className={iconButton}>
+                <Trash2 size={18} aria-hidden />
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
