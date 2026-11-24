@@ -57,8 +57,6 @@ const limiter: Ratelimit | null =
       })
     : null;
 
-if (!limiter) warnOnceIfMissingConfig();
-
 /**
  * Derives a stable per-client key from the standard Vercel/proxy forwarded
  * header — the first address in `x-forwarded-for` (the original client,
@@ -104,6 +102,8 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
   const activeLimiter = limiterOverride !== undefined ? limiterOverride : limiter;
   if (!activeLimiter) {
+    // Warned on the first real request, not at import, so builds stay quiet.
+    if (limiterOverride === undefined) warnOnceIfMissingConfig();
     return { allowed: true, limit: 0, remaining: 0, reset: 0 };
   }
   try {

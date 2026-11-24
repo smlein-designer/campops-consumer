@@ -327,6 +327,8 @@ export type Campsite = {
   region: string;
   latitude: number;
   longitude: number;
+  /** Photo export key (Handoff Spec §6) — absent on records predating v3. */
+  photoKey?: string;
 };
 
 /**

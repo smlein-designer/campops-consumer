@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-public-sans);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
   --font-display: var(--font-national-park);
   --font-heading: var(--font-national-park);
@@ -71,12 +71,41 @@
   --color-surface-fade: var(--surface-fade);
   --color-scrim: var(--scrim);
 
-  /* Fixed radius scale (Handoff Spec 1.5) — overrides shadcn's calc()-derived scale */
+  /* Fixed radius scale (v3 Handoff Spec 1.5) — overrides shadcn's calc()-derived scale */
   --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
   --radius-full: 9999px;
+
+  /* v3 semantic color (Handoff Spec 1.2) */
+  --color-bg-canvas: var(--v3-bg-canvas);
+  --color-bg-surface: var(--v3-bg-surface);
+  --color-bg-subtle: var(--v3-bg-subtle);
+  --color-bg-inverse: var(--v3-bg-inverse);
+  --color-bg-brand: var(--v3-bg-brand);
+  --color-bg-held: var(--v3-bg-held);
+  --color-bg-attention: var(--v3-bg-attention);
+  --color-bg-attention-strong: var(--v3-bg-attention-strong);
+  --color-bg-info: var(--v3-bg-info);
+  --color-bg-control-off: var(--v3-bg-control-off);
+  --color-text-primary: var(--v3-text-primary);
+  --color-text-secondary: var(--v3-text-secondary);
+  --color-text-tertiary: var(--v3-text-tertiary);
+  --color-text-on-brand: var(--v3-text-on-brand);
+  --color-text-on-inverse: var(--v3-text-on-inverse);
+  --color-text-held: var(--v3-text-held);
+  --color-text-attention: var(--v3-text-attention);
+  --color-text-info: var(--v3-text-info);
+  --color-text-link: var(--v3-text-link);
+  --color-border-default: var(--v3-border-default);
+  --color-border-strong: var(--v3-border-strong);
+  --color-border-attention: var(--v3-border-attention);
+  --color-border-attention-strong: var(--v3-border-attention-strong);
+  --color-status-working: var(--v3-status-working);
+  --color-status-attention: var(--v3-status-attention);
 }
 
 :root {
@@ -152,6 +181,57 @@
   --water-tint: #dfe8ef;
   --sky: #8fc1de;
   --sky-tint: #e8f1f6;
+
+  /* v3 color primitives (Handoff Spec 1.1) */
+  --stone-50: #fbfaf7;
+  --stone-100: #f4f3ef;
+  --stone-200: #eceae3;
+  --stone-300: #e2e0d8;
+  --stone-400: #cfccc2;
+  --stone-600: #6b736f;
+  --stone-700: #5b6460;
+  --stone-800: #3f4743;
+  --ink-900: #18201b;
+  --white: #ffffff;
+  --forest-100: #e3eee7;
+  --forest-600: #2f7a55;
+  --forest-700: #1e5a3c;
+  --forest-800: #1e3b2f;
+  --forest-900: #0f241b;
+  --ember-50: #fbf1e8;
+  --ember-100: #fbe9dc;
+  --ember-300: #dcc3ae;
+  --ember-500: #c8611f;
+  --ember-800: #8a3d0e;
+  --lake-100: #dce8f2;
+  --lake-700: #23527a;
+
+  /* v3 semantic color — resolved values (Handoff Spec 1.2) */
+  --v3-bg-canvas: var(--stone-100);
+  --v3-bg-surface: var(--white);
+  --v3-bg-subtle: var(--stone-200);
+  --v3-bg-inverse: var(--ink-900);
+  --v3-bg-brand: var(--forest-800);
+  --v3-bg-held: var(--forest-100);
+  --v3-bg-attention: var(--ember-50);
+  --v3-bg-attention-strong: var(--ember-100);
+  --v3-bg-info: var(--lake-100);
+  --v3-bg-control-off: var(--stone-600);
+  --v3-text-primary: var(--ink-900);
+  --v3-text-secondary: var(--stone-700);
+  --v3-text-tertiary: var(--stone-600);
+  --v3-text-on-brand: var(--white);
+  --v3-text-on-inverse: var(--stone-100);
+  --v3-text-held: var(--forest-700);
+  --v3-text-attention: var(--ember-800);
+  --v3-text-info: var(--lake-700);
+  --v3-text-link: var(--forest-800);
+  --v3-border-default: var(--stone-300);
+  --v3-border-strong: var(--stone-400);
+  --v3-border-attention: var(--ember-300);
+  --v3-border-attention-strong: var(--ember-500);
+  --v3-status-working: var(--forest-600);
+  --v3-status-attention: var(--ember-500);
 }
 
 /* Set by useVisualViewport while the software keyboard is open. */
@@ -205,6 +285,98 @@ html[data-keyboard-open] {
   }
 }
 
+/* v3 type ramp (Handoff Spec 1.3). Each style is font + size + line-height
+   together, so these are component classes rather than Tailwind's
+   single-axis --text-* theme tokens. */
+@layer utilities {
+  .text-display-xl {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 72px;
+    line-height: 72px;
+  }
+  .text-display-l {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 54px;
+    line-height: 54px;
+  }
+  .text-heading-l {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 44px;
+  }
+  .text-heading-m {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 26px;
+    line-height: 30px;
+  }
+  .text-heading-s {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 20px;
+    line-height: 24px;
+  }
+  .text-price-l {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 26px;
+    line-height: 30px;
+  }
+  .text-body-l {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 17px;
+    line-height: 26px;
+  }
+  .text-body-m {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 15px;
+    line-height: 22px;
+  }
+  .text-body-s {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .text-label-l {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 15px;
+    line-height: 20px;
+  }
+  .text-label-m {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .text-label-s {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 16px;
+  }
+  .text-overline {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 16px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .text-caption {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 12px;
+    line-height: 16px;
+  }
+}
+
 /* Independently scrolling desktop regions (conversation column, Trip
    Panel) — Pages v2 "scroll bar" reference: a 24px track with an 8px inset,
    rounded thumb. Progressive enhancement: engines with ::-webkit-scrollbar
@@ -214,14 +386,14 @@ html[data-keyboard-open] {
    arrow buttons are intentionally not forced. */
 @supports selector(::-webkit-scrollbar) {
   .scroll-region::-webkit-scrollbar {
-    width: 24px;
+    width: 14px;
   }
   .scroll-region::-webkit-scrollbar-track {
     background: var(--scrollbar-track);
   }
   .scroll-region::-webkit-scrollbar-thumb {
     min-height: 40px;
-    border: 8px solid transparent;
+    border: 3px solid transparent;
     border-radius: 9999px;
     background: var(--scrollbar-thumb) padding-box;
   }

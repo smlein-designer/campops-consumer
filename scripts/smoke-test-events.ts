@@ -2,7 +2,7 @@
  * Verifies the real application-event model (src/lib/events.ts) and its
  * integration with evaluateCampsites/transitionReservation. Every event
  * here is derived from an actual before/after state pair the way
- * src/app/page.tsx orchestrates it — this test exercises the same
+ * src/app/v2/page.tsx orchestrates it — this test exercises the same
  * derivation functions in the same order, not a separate reimplementation.
  */
 import { evaluateCampsites } from "../src/lib/evaluate";

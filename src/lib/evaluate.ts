@@ -157,7 +157,8 @@ function checkConstraint(
   // a lake").
   const wantsDirect =
     l.includes("waterfront") ||
-    l.includes("directly on the water") ||
+    // "On the water" means right on it — a short walk away is a trade-off.
+    l.includes("on the water") ||
     l.includes("direct water access") ||
     l.includes("on the lake") ||
     l.includes("on the river") ||
@@ -365,6 +366,10 @@ const RANK_ORDER: Record<MatchType, number> = {
 export function evaluateCampsites(
   intent: TripIntent,
   excludeIds: ReadonlySet<string> = new Set(),
+  // Trip-level checks the caller already knows how to answer per site (v3:
+  // drive time, trip budget, activities nearby). "hard" checks gate the
+  // match like any other hard requirement; the rest only affect ranking.
+  extraChecks: (site: Campsite) => ConstraintCheck[] = () => [],
 ): EvaluationResult {
   // Concrete requested date range, if BOTH dates are stated AND resolvable
   // to real calendar dates (Dataset Depth correction, 2026-09-04) — used for
@@ -482,17 +487,20 @@ export function evaluateCampsites(
       }
     }
 
+    const extra = extraChecks(site);
     const hardChecks = [
       ...capacityCheck,
       ...destinationCheck,
       ...petCheck,
       ...dateRangeCheck,
       ...budgetChecks,
+      ...extra.filter((c) => c.tier === "hard"),
       ...intent.hardRequirements.map((r) =>
         checkConstraint(r, "hard", site, intent.guestCount, intent.originZip),
       ),
     ];
     const softChecks = [
+      ...extra.filter((c) => c.tier !== "hard"),
       ...intent.flexibleConstraints.map((r) =>
         checkConstraint(r, "flexible", site, intent.guestCount, intent.originZip),
       ),
